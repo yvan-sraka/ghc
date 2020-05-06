@@ -260,9 +260,6 @@ test('tc246', normal, compile, [''])
 test('tc247', normal, compile, [''])
 test('tc248', normal, compile, [''])
 
-test('FD1', normal, compile_fail, [''])
-test('FD2', normal, compile_fail, [''])
-test('FD3', normal, compile_fail, [''])
 test('FD4', normal, compile, [''])
 
 test('faxen', normal, compile, [''])
@@ -754,3 +751,6 @@ test('TyAppPat_Wildcard', normal, compile, [''])
 
 test('T18998', normal, compile, [''])
 test('T18998b', normal, compile, [''])
+test('FunDepOrigin1', normal, compile, [''])
+test('FloatFDs', normal, compile, [''])
+test('ImplicitParamFDs', normal, compile, [''])

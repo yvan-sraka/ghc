@@ -137,10 +137,8 @@ matchGlobalInst :: DynFlags
                              -- See Note [Shortcut solving: overlap]
                 -> Class -> [Type] -> TcM ClsInstResult
 matchGlobalInst dflags short_cut clas tys
-  | cls_name == knownNatClassName
-  = matchKnownNat    dflags short_cut clas tys
-  | cls_name == knownSymbolClassName
-  = matchKnownSymbol dflags short_cut clas tys
+  | cls_name == knownNatClassName     = matchKnownNat    dflags short_cut clas tys
+  | cls_name == knownSymbolClassName  = matchKnownSymbol dflags short_cut clas tys
   | isCTupleClass clas                = matchCTuple          clas tys
   | cls_name == typeableClassName     = matchTypeable        clas tys
   | clas `hasKey` heqTyConKey         = matchHeteroEquality       tys

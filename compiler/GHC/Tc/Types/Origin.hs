@@ -16,7 +16,7 @@ module GHC.Tc.Types.Origin (
   -- CtOrigin
   CtOrigin(..), exprCtOrigin, lexprCtOrigin, matchesCtOrigin, grhssCtOrigin,
   isVisibleOrigin, toInvisibleOrigin,
-  pprCtOrigin, isGivenOrigin
+  pprCtOrigin, isGivenOrigin, isWantedWantedFunDepOrigin
 
   ) where
 
@@ -374,6 +374,8 @@ data CtOrigin
   | ArithSeqOrigin (ArithSeqInfo GhcRn) -- [x..], [x..y] etc
   | AssocFamPatOrigin   -- When matching the patterns of an associated
                         -- family instance with that of its parent class
+                        -- IMPORTANT: These constraints will never cause errors;
+                        -- See Note [Constraints to ignore] in GHC.Tc.Errors
   | SectionOrigin
   | TupleOrigin         -- (..,..)
   | ExprSigOrigin       -- e :: ty
@@ -443,9 +445,18 @@ data CtOrigin
   | InstProvidedOrigin Module ClsInst
         -- Skolem variable arose when we were testing if an instance
         -- is solvable or not.
+<<<<<<< HEAD
   | NonLinearPatternOrigin
   | UsageEnvironmentOf Name
 
+||||||| merged common ancestors
+=======
+  | WantedSuperclassOrigin PredType CtOrigin
+        -- From expanding out the superclasses of a Wanted; the PredType
+        -- is the subclass predicate, and the origin
+        -- of the original Wanted is the CtOrigin
+
+>>>>>>> # This is a combination of 13 commits.
 -- An origin is visible if the place where the constraint arises is manifest
 -- in user code. Currently, all origins are visible except for invisible
 -- TypeEqOrigins. This is used when choosing which error of
@@ -466,6 +477,12 @@ isGivenOrigin (GivenOrigin {})              = True
 isGivenOrigin (FunDepOrigin1 _ o1 _ _ o2 _) = isGivenOrigin o1 && isGivenOrigin o2
 isGivenOrigin (FunDepOrigin2 _ o1 _ _)      = isGivenOrigin o1
 isGivenOrigin _                             = False
+
+-- See Note [Suppressing confusing errors] in GHC.Tc.Errors
+isWantedWantedFunDepOrigin :: CtOrigin -> Bool
+isWantedWantedFunDepOrigin (FunDepOrigin1 _ orig1 _ _ orig2 _)
+  = not (isGivenOrigin orig1) && not (isGivenOrigin orig2)
+isWantedWantedFunDepOrigin _ = False
 
 instance Outputable CtOrigin where
   ppr = pprCtOrigin
@@ -539,7 +556,6 @@ lGRHSCtOrigin _ = Shouldn'tHappenOrigin "multi-way GRHS"
 
 pprCtOrigin :: CtOrigin -> SDoc
 -- "arising from ..."
--- Not an instance of Outputable because of the "arising from" prefix
 pprCtOrigin (GivenOrigin sk) = ctoHerald <+> ppr sk
 
 pprCtOrigin (SpecPragOrigin ctxt)
@@ -613,6 +629,10 @@ pprCtOrigin (InstProvidedOrigin mod cls_inst)
   = vcat [ text "arising when attempting to show that"
          , ppr cls_inst
          , text "is provided by" <+> quotes (ppr mod)]
+
+pprCtOrigin (WantedSuperclassOrigin subclass_pred subclass_orig)
+  = sep [ ctoHerald <+> text "a superclass required to satisfy" <+> quotes (ppr subclass_pred) <> comma
+        , pprCtOrigin subclass_orig ]
 
 pprCtOrigin simple_origin
   = ctoHerald <+> pprCtO simple_origin

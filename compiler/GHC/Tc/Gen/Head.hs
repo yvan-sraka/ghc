@@ -665,7 +665,7 @@ tcExprSig expr sig@(PartialSig { psig_name = name, sig_loc = loc })
        ; tau <- zonkTcType tau
        ; let inferred_theta = map evVarPred givens
              tau_tvs        = tyCoVarsOfType tau
-       ; (binders, my_theta) <- chooseInferredQuantifiers inferred_theta
+       ; (binders, my_theta) <- chooseInferredQuantifiers residual inferred_theta
                                    tau_tvs qtvs (Just sig_inst)
        ; let inferred_sigma = mkInfSigmaTy qtvs inferred_theta tau
              my_sigma       = mkInvisForAllTys binders (mkPhiTy  my_theta tau)

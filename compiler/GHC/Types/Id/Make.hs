@@ -899,7 +899,6 @@ For further reading, see:
 
 Note [Bangs on imported data constructors]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 We pass Maybe [HsImplBang] to mkDataConRep to make use of HsImplBangs
 from imported modules.
 

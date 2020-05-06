@@ -66,7 +66,7 @@ module GHC.Core.TyCo.Rep (
         pickLR,
 
         -- ** Analyzing types
-        TyCoFolder(..), foldTyCo,
+        TyCoFolder(..), foldTyCo, noView,
 
         -- * Sizes
         typeSize, coercionSize, provSize,
@@ -94,6 +94,7 @@ import GHC.Core.Coercion.Axiom
 import GHC.Builtin.Names ( liftedTypeKindTyConKey, liftedRepDataConKey, manyDataConKey, tYPETyConKey )
 import {-# SOURCE #-} GHC.Builtin.Types ( liftedTypeKindTyCon, liftedTypeKind, manyDataConTy )
 import {-# SOURCE #-} GHC.Builtin.Types.Prim ( tYPETyCon )
+import GHC.Types.Unique ( Uniquable(..) )
 import GHC.Types.Basic ( LeftOrRight(..), pickLR )
 import GHC.Types.Unique ( hasKey, Uniquable(..) )
 import GHC.Utils.Outputable
@@ -155,6 +156,7 @@ data Type
   | ForAllTy
         {-# UNPACK #-} !TyCoVarBinder
         Type            -- ^ A Π type.
+             -- Note [When we quantify over a coercion variable]
              -- INVARIANT: If the binder is a coercion variable, it must
              -- be mentioned in the Type. See
              -- Note [Unused coercion variable in ForAllTy]
@@ -559,6 +561,35 @@ In sum, in order to uphold (EQ), we need the following invariants:
         See Note [Weird typing rule for ForAllTy]
 
 These invariants are all documented above, in the declaration for Type.
+
+Note [When we quantify over a coercion variable]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The TyCoVarBinder in a ForAllTy can be (most often) a TyVar or (rarely)
+a CoVar. We support quantifying over a CoVar here in order to support
+a homogeneous (~#) relation (someday -- not yet implemented). Here is
+the example:
+
+  type (:~~:) :: forall k1 k2. k1 -> k2 -> Type
+  data a :~~: b where
+    HRefl :: a :~~: a
+
+Assuming homogeneous equality (that is, with
+  (~#) :: forall k. k -> k -> TYPE (TupleRep '[])
+) after rejigging to make equalities explicit, we get a constructor that
+looks like
+
+  HRefl :: forall k1 k2 (a :: k1) (b :: k2).
+           forall (cv :: k1 ~# k2). (a |> cv) ~# b
+        => (:~~:) k1 k2 a b
+
+Note that we must cast `a` by a cv bound in the same type in order to
+make this work out.
+
+See also https://gitlab.haskell.org/ghc/ghc/-/wikis/dependent-haskell/phase2
+which gives a general road map that covers this space.
+
+Having this feature in Core does *not* mean we have it in source Haskell.
+See #15710 about that.
 
 Note [Unused coercion variable in ForAllTy]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1862,7 +1893,7 @@ We were also worried about
                                      `extendVarSet` tv
 
 Here deep_fvs and deep_tcf are mutually recursive, unlike fvs and tcf.
-But, amazingly, we get good code here too. GHC is careful not to makr
+But, amazingly, we get good code here too. GHC is careful not to mark
 TyCoFolder data constructor for deep_tcf as a loop breaker, so the
 record selections still cancel.  And eta expansion still happens too.
 -}
@@ -1871,8 +1902,8 @@ data TyCoFolder env a
   = TyCoFolder
       { tcf_view  :: Type -> Maybe Type   -- Optional "view" function
                                           -- E.g. expand synonyms
-      , tcf_tyvar :: env -> TyVar -> a
-      , tcf_covar :: env -> CoVar -> a
+      , tcf_tyvar :: env -> TyVar -> a    -- Does not automatically recur
+      , tcf_covar :: env -> CoVar -> a    -- into kinds of variables
       , tcf_hole  :: env -> CoercionHole -> a
           -- ^ What to do with coercion holes.
           -- See Note [Coercion holes] in "GHC.Core.TyCo.Rep".
@@ -1942,6 +1973,10 @@ foldTyCo (TyCoFolder { tcf_view       = view
     go_prov env (PhantomProv co)    = go_co env co
     go_prov env (ProofIrrelProv co) = go_co env co
     go_prov _   (PluginProv _)      = mempty
+
+-- | A view function that looks through nothing.
+noView :: Type -> Maybe Type
+noView _ = Nothing
 
 {- *********************************************************************
 *                                                                      *

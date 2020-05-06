@@ -6,8 +6,8 @@ ExtraTcsUntch.hs:23:18: error:
       In the expression: h [x]
       In an equation for ‘g1’: g1 _ = h [x]
     • Relevant bindings include
-        x :: p (bound at ExtraTcsUntch.hs:21:3)
-        f :: p -> ((), ((), ())) (bound at ExtraTcsUntch.hs:21:1)
+        x :: p0 (bound at ExtraTcsUntch.hs:21:3)
+        f :: p0 -> ((), ((), ())) (bound at ExtraTcsUntch.hs:21:1)
 
 ExtraTcsUntch.hs:25:38: error:
     • Couldn't match expected type: F Int

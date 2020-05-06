@@ -267,9 +267,6 @@ runTyCoVars :: Endo TyCoVarSet -> TyCoVarSet
 {-# INLINE runTyCoVars #-}
 runTyCoVars f = appEndo f emptyVarSet
 
-noView :: Type -> Maybe Type
-noView _ = Nothing
-
 {- *********************************************************************
 *                                                                      *
           Deep free variables
@@ -380,8 +377,8 @@ shallowTcvFolder = TyCoFolder { tcf_view = noView
 ********************************************************************* -}
 
 
-{- Note [Finding free coercion varibles]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+{- Note [Finding free coercion variables]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Here we are only interested in the free /coercion/ variables.
 We can achieve this through a slightly differnet TyCo folder.
 
@@ -390,6 +387,7 @@ Notice that we look deeply, into kinds.
 See #14880.
 -}
 
+-- See Note [Finding free coercion variables]
 coVarsOfType  :: Type       -> CoVarSet
 coVarsOfTypes :: [Type]     -> CoVarSet
 coVarsOfCo    :: Coercion   -> CoVarSet
@@ -429,7 +427,6 @@ deepCoVarFolder = TyCoFolder { tcf_view = noView
     do_hole is hole  = do_covar is (coHoleCoVar hole)
                        -- See Note [CoercionHoles and coercion free variables]
                        -- in GHC.Core.TyCo.Rep
-
 
 {- *********************************************************************
 *                                                                      *

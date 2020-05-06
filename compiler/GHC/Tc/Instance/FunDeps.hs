@@ -6,6 +6,7 @@
 -}
 
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE DeriveFunctor #-}
 
 -- | Functional dependencies
 --
@@ -18,6 +19,7 @@ module GHC.Tc.Instance.FunDeps
    , checkInstCoverage
    , checkFunDeps
    , pprFundeps
+   , instFD, oclose
    )
 where
 
@@ -120,6 +122,7 @@ data FunDepEqn loc
           , fd_pred1 :: PredType   -- The FunDepEqn arose from
           , fd_pred2 :: PredType   --  combining these two constraints
           , fd_loc   :: loc  }
+    deriving Functor
 
 {-
 Given a bunch of predicates that must hold, such as
@@ -550,6 +553,13 @@ oclose preds fixed_tvs
   | null tv_fds = fixed_tvs -- Fast escape hatch for common case.
   | otherwise   = fixVarSet extend fixed_tvs
   where
+    non_ip_preds = filterOut isIPPred preds
+      -- implicit params don't really determine a type variable, and
+      -- skipping this causes implicit params to monomorphise too many
+      -- variables; see Note [Inheriting implicit parameters] in
+      -- GHC.Tc.Solver. Skipping causes typecheck/should_compile/tc219
+      -- to fail.
+
     extend fixed_tvs = foldl' add fixed_tvs tv_fds
        where
           add fixed_tvs (ls,rs)
@@ -560,7 +570,7 @@ oclose preds fixed_tvs
     tv_fds  :: [(TyCoVarSet,TyCoVarSet)]
     tv_fds  = [ (tyCoVarsOfTypes ls, fvVarSet $ injectiveVarsOfTypes True rs)
                   -- See Note [Care with type functions]
-              | pred <- preds
+              | pred <- non_ip_preds
               , pred' <- pred : transSuperClasses pred
                    -- Look for fundeps in superclasses too
               , (ls, rs) <- determined pred' ]
