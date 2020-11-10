@@ -61,6 +61,13 @@ import GHC.Exts (indexCharOffAddr#, Char(..), Int(..))
 import Data.Char        ( chr, ord )
 import Data.Bits
 
+-- | Should we enable overflow checks for construction functions?
+-- We do this in 32-bit compilers (since the Unique space is quite small on
+-- such platforms) and DEBUG compilers (just in case).
+tagOverflowChecks :: Bool
+tagOverflowChecks = is32Bit || debugIsOn
+  where is32Bit = finiteBitSize (0 :: Int) < 64
+
 {-
 ************************************************************************
 *                                                                      *
@@ -104,8 +111,15 @@ mkUniqueGrimily = MkUnique
 {-# INLINE getKey #-}
 getKey (MkUnique x) = x
 
-incrUnique (MkUnique i) = MkUnique (i + 1)
-stepUnique (MkUnique i) n = MkUnique (i + n)
+incrUnique (MkUnique i)
+  | tagOverflowChecks
+  , i .&. uniqueMask /= uniqueMask = panic "incrUnique: Unique overflow"
+  | otherwise                      = MkUnique (i + 1)
+
+stepUnique (MkUnique i) n
+  | tagOverflowChecks
+  , i .&. uniqueMask /= uniqueMask = panic "stepUnique: Unique overflow"
+  | otherwise                      = MkUnique (i + n)
 
 mkLocalUnique :: Int -> Unique
 mkLocalUnique i = mkUnique 'X' i
@@ -133,10 +147,12 @@ uniqueMask = (1 `shiftL` uNIQUE_BITS) - 1
 mkUnique :: Char -> Int -> Unique       -- Builds a unique from pieces
 -- EXPORTED and used only in GHC.Builtin.Uniques
 mkUnique c i
-  = MkUnique (tag .|. bits)
+  | tagOverflowChecks
+  , bits /= i = panic "mkUnique: Unique overflow"
+  | otherwise = MkUnique (tag .|. bits)
   where
-    tag  = ord c `shiftL` uNIQUE_BITS
-    bits = i .&. uniqueMask
+    !tag  = ord c `shiftL` uNIQUE_BITS
+    !bits = i .&. uniqueMask
 
 unpkUnique (MkUnique u)
   = let
