@@ -421,5 +421,6 @@ test('T15427', normal, compile_and_run, [''])
 
 test('cloneMyStack', [extra_files(['cloneStackLib.c'])], compile_and_run, ['cloneStackLib.c'])
 test('cloneMyStack2', ignore_stdout, compile_and_run, [''])
+test('cloneMyStack_retBigStackFrame', [extra_files(['cloneStackLib.c']), ignore_stdout], compile_and_run, ['cloneStackLib.c'])
 
 test('cloneThreadStack', [only_ways(['threaded1']), extra_ways(['threaded1']), extra_files(['cloneStackLib.c'])], compile_and_run, ['cloneStackLib.c -threaded'])
