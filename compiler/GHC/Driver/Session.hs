@@ -2936,6 +2936,10 @@ dynamic_flags_deps = [
       (noArg (\d -> d { profAuto = ProfAutoCalls } ))
   , make_ord_flag defGhcFlag "fno-prof-auto"
       (noArg (\d -> d { profAuto = NoProfAuto } ))
+
+  , make_ord_flag defGhcFlag "fdistinct-constructor-tables"
+      (NoArg (setGeneralFlag Opt_DistinctConstructorTables))
+
   , make_ord_flag defGhcFlag "finfo-table-map"
       (NoArg (setGeneralFlag Opt_InfoTableMap))
 
