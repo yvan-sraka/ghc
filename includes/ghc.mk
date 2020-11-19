@@ -273,6 +273,7 @@ $(includes_SETTINGS) : includes/Makefile | $$(dir $$@)/.
 includes_DERIVEDCONSTANTS = includes/dist-derivedconstants/header/DerivedConstants.h
 includes_GHCCONSTANTS_HASKELL_TYPE = includes/dist-derivedconstants/header/GHCConstantsHaskellType.hs
 includes_GHCCONSTANTS_HASKELL_VALUE = includes/dist-derivedconstants/header/platformConstants
+includes_EVENTLOG_CONSTANTS = includes/EventlogConstants.h
 
 INSTALL_LIBS += $(includes_GHCCONSTANTS_HASKELL_VALUE)
 
@@ -296,6 +297,11 @@ $(includes_GHCCONSTANTS_HASKELL_TYPE): $(deriveConstants_INPLACE) | $$(dir $$@)/
 
 $(includes_GHCCONSTANTS_HASKELL_VALUE): $(deriveConstants_INPLACE) | $$(dir $$@)/.
 	$< --gen-haskell-value -o $@ --tmpdir $(dir $@) $(DERIVE_CONSTANTS_FLAGS)
+
+$(includes_EVENTLOG_CONSTANTS): $(gen_event_types_INPLACE) | $$(dir $$@)/.
+	${PYTHON} $< --event-types-defines=$@
+
+includes/EventLog.h : $(includes_EVENTLOG_CONSTANTS)
 endif
 
 # ---------------------------------------------------------------------------

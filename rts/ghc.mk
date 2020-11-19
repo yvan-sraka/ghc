@@ -49,6 +49,11 @@ rts_C_SRCS := $(wildcard rts/*.c $(foreach dir,$(ALL_DIRS),rts/$(dir)/*.c))
 rts_C_HOOK_SRCS := $(wildcard rts/hooks/*.c)
 rts_CMM_SRCS := $(wildcard rts/*.cmm)
 
+rts_C_SRCS += rts/EventTypes.h
+
+rts/EventTypes.h : rts/gen_event_types.py
+	${PYTHON} $< --event-types-array=$@
+
 # Don't compile .S files when bootstrapping a new arch
 ifneq "$(PORTING_HOST)" "YES"
 ifneq "$(findstring $(TargetArch_CPP), i386 powerpc powerpc64)" ""
