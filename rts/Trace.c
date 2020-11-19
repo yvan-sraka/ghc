@@ -128,7 +128,7 @@ void flushTrace ()
 void tracingAddCapapilities (uint32_t from, uint32_t to)
 {
     if (eventlog_enabled) {
-        moreCapEventBufs(from,to);
+        moreCapEventBufs(to);
     }
 }
 

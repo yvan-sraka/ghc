@@ -44,6 +44,7 @@ typedef struct _EventsBuf {
   EventCapNo capno; // which capability this buffer belongs to, or -1
 } EventsBuf;
 
+static uint32_t nCapEventBufs = 0;
 EventsBuf *capEventBuf; // one EventsBuf for each Capability
 
 EventsBuf eventBuf; // an EventsBuf not associated with any Capability
@@ -561,7 +562,7 @@ initEventLogging()
      * Use a single buffer to store the header with event types, then flush
      * the buffer so all buffers are empty for writing events.
      */
-    moreCapEventBufs(0, get_n_capabilities());
+    moreCapEventBufs(get_n_capabilities());
 
     initEventsBuf(&eventBuf, EVENT_LOG_SIZE, (EventCapNo)(-1));
 #if defined(THREADED_RTS)
@@ -582,6 +583,7 @@ eventLogStatus(void)
 static bool
 startEventLogging_(void)
 {
+    moreCapEventBufs(get_n_capabilities());
     initEventLogWriter();
 
     postHeaderEvents();
@@ -648,9 +650,12 @@ endEventLogging(void)
 }
 
 void
-moreCapEventBufs (uint32_t from, uint32_t to)
+moreCapEventBufs (uint32_t to)
 {
-    if (from > 0) {
+    if (!eventlog_enabled)
+        return;
+
+    if (nCapEventBufs > 0) {
         capEventBuf = stgReallocBytes(capEventBuf, to * sizeof(EventsBuf),
                                       "moreCapEventBufs");
     } else {
@@ -658,17 +663,18 @@ moreCapEventBufs (uint32_t from, uint32_t to)
                                      "moreCapEventBufs");
     }
 
-    for (uint32_t c = from; c < to; ++c) {
+    for (uint32_t c = nCapEventBufs; c < to; ++c) {
         initEventsBuf(&capEventBuf[c], EVENT_LOG_SIZE, c);
     }
 
-    // The from == 0 already covered in initEventLogging, so we are interested
+    // The nCapEventBufs == 0 already covered in initEventLogging, so we are interested
     // only in case when we are increasing capabilities number
-    if (from > 0) {
-        for (uint32_t c = from; c < to; ++c) {
+    if (nCapEventBufs > 0) {
+        for (uint32_t c = nCapEventBufs; c < to; ++c) {
            postBlockMarker(&capEventBuf[c]);
         }
     }
+    nCapEventBufs = to;
 }
 
 
