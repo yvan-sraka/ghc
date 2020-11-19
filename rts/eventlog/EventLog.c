@@ -45,11 +45,11 @@ typedef struct _EventsBuf {
 } EventsBuf;
 
 static uint32_t nCapEventBufs = 0;
-EventsBuf *capEventBuf; // one EventsBuf for each Capability
+static EventsBuf *capEventBuf; // one EventsBuf for each Capability
 
-EventsBuf eventBuf; // an EventsBuf not associated with any Capability
+static EventsBuf eventBuf; // an EventsBuf not associated with any Capability
 #if defined(THREADED_RTS)
-Mutex eventBufMutex; // protected by this mutex
+static Mutex eventBufMutex; // protected by this mutex
 #endif
 
 char *EventDesc[] = {
@@ -609,6 +609,7 @@ startEventLogging(const EventLogWriter *ev_writer)
     }
 
     eventlog_enabled = true;
+    flushCount = 0;
     event_log_writer = ev_writer;
     return startEventLogging_();
 }
