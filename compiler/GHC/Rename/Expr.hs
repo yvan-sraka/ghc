@@ -212,22 +212,22 @@ rnExpr (NegApp _ e _)
 
 ------------------------------------------
 -- Record dot syntax
-rnExpr (GetField x e f g)
+rnExpr (GetField x e f _ g)
   = do { (e', _) <- rnLExpr e
        ; (g', fv) <- rnLExpr g
-       ; return (GetField x e' f g', fv)
+       ; return (GetField x e' f Nothing g', fv)
        }
 
-rnExpr (Projection x fs p)
+rnExpr (Projection x fs _ p)
   = do { (p', fv) <- rnLExpr p
-       ; return (Projection x fs p', fv)
+       ; return (Projection x fs Nothing p', fv)
        }
 
-rnExpr (RecordDotUpd x e us f)
+rnExpr (RecordDotUpd x e us _ f)
   = do { (e', _) <- rnLExpr e
        ; us' <- map fst <$> mapM rnRecUpdProj us
        ; (f', fv) <- rnLExpr f
-       ; return (RecordDotUpd x e' us' f', fv)
+       ; return (RecordDotUpd x e' us' Nothing f', fv)
        }
   where
     rnRecUpdProj :: LHsRecUpdProj GhcPs -> RnM (LHsRecUpdProj GhcRn, FreeVars)

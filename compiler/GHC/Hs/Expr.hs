@@ -494,8 +494,12 @@ data HsExpr p
         gf_ext :: XGetField p
       , gf_expr :: LHsExpr p
       , gf_field :: Located FastString
+      , gf_get_field :: Maybe (IdP p)
       , gf_getField :: LHsExpr p -- Desugared equivalent 'getField' term.
       }
+  -- ^ @Just id@ means @RebindableSyntax@ is in use and gives the id
+  --   of the in-scope 'getField'.
+  --   NB: Not in use after typechecking.
 
   -- Record dot update e.g. @a{foo.bar.baz=1, quux}@.
   --
@@ -510,8 +514,12 @@ data HsExpr p
         rdupd_ext :: XRecordDotUpd p
       , rdupd_expr :: LHsExpr p
       , rdupd_upds :: [LHsRecUpdProj p]
+      , rdupd_get_set_field :: Maybe (IdP p, IdP p)
       , rdupd_setField :: LHsExpr p -- Desugared equivalent 'setField' term.
       }
+  -- ^ @Just id@ means @RebindableSyntax@ is in use and gives the ids
+  --   of the in-scope 'getField' and 'setField'.
+  --   NB: Not in use after typechecking.
 
   -- | Record field selector. e.g. @(.x)@ or @(.x.y)@
   --
@@ -524,8 +532,12 @@ data HsExpr p
   | Projection {
         proj_ext :: XProjection p
       , proj_flds :: [Located FastString]
+      , proj_get_field :: Maybe (IdP p)
       , proj_proj :: LHsExpr p -- Desugared equivalent 'getField' term.
       }
+  -- ^ @Just id@ means @RebindableSyntax@ is in use and gives the id
+  --   of the in-scope 'getField'.
+  --   NB: Not in use after typechecking.
 
   -- | Expression with an explicit type signature. @e :: type@
   --

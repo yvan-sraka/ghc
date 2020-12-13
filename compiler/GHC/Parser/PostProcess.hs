@@ -2198,7 +2198,9 @@ mkRdrRecordDotUpd dot exp@(L _ _) fbinds =
                   rdupd_ext = noExtField
                 , rdupd_expr = exp
                 , rdupd_upds = updates
-                , rdupd_setField = setField }
+                , rdupd_get_set_field = Nothing
+                , rdupd_setField = setField
+                }
   where
     toProjUpdates :: [Fbind (HsExpr GhcPs)] -> [LHsRecUpdProj GhcPs]
     toProjUpdates = map (\case { Pbind p -> p
@@ -2760,6 +2762,7 @@ mkGetField loc arg field =
       gf_ext = noExtField
     , gf_expr = arg
     , gf_field = field
+    , gf_get_field = Nothing
     , gf_getField = mkGet arg field
     }
 
@@ -2769,6 +2772,7 @@ mkProjection loc flds =
   L loc Projection {
       proj_ext = noExtField
     , proj_flds = flds
+    , proj_get_field = Nothing
     , proj_proj = mkProj flds
     }
 
