@@ -212,22 +212,41 @@ rnExpr (NegApp _ e _)
 
 ------------------------------------------
 -- Record dot syntax
-rnExpr (GetField x e f _ g)
-  = do { (e', _) <- rnLExpr e
-       ; (g', fv) <- rnLExpr g
-       ; return (GetField x e' f Nothing g', fv)
+
+rnExpr (GetField x e f _)
+  = do { rebindable_on <- xoptM LangExt.RebindableSyntax
+       ; (e', fvs) <- rnLExpr e
+       ; if rebindable_on
+         then do {
+           getField <- lookupOccRn (mkVarUnqual (fsLit "getField"))
+         ; return (GetField x e' f (Just getField), fvs `plusFV` unitFV getField)
+         }
+         else return (GetField x e' f Nothing, fvs)
        }
 
 rnExpr (Projection x fs _ p)
-  = do { (p', fv) <- rnLExpr p
-       ; return (Projection x fs Nothing p', fv)
+  = do { rebindable_on <- xoptM LangExt.RebindableSyntax
+       ; (p', fv) <- rnLExpr p
+       ; if rebindable_on
+         then do {
+           getField <- lookupOccRn (mkVarUnqual (fsLit "getField"))
+         ; return (Projection x fs (Just getField) p', fv)
+         }
+         else return (Projection x fs Nothing p', fv)
        }
 
 rnExpr (RecordDotUpd x e us _ f)
-  = do { (e', _) <- rnLExpr e
+  = do { rebindable_on <- xoptM LangExt.RebindableSyntax
+       ; (e', _) <- rnLExpr e
        ; us' <- map fst <$> mapM rnRecUpdProj us
        ; (f', fv) <- rnLExpr f
-       ; return (RecordDotUpd x e' us' Nothing f', fv)
+       ; if rebindable_on
+         then do {
+           getField <- lookupOccRn (mkVarUnqual (fsLit "getField"))
+         ; setField <- lookupOccRn (mkVarUnqual (fsLit "setField"))
+         ; return (RecordDotUpd x e' us'(Just (getField, setField)) f', fv)
+         }
+         else return (RecordDotUpd x e' us' Nothing f', fv)
        }
   where
     rnRecUpdProj :: LHsRecUpdProj GhcPs -> RnM (LHsRecUpdProj GhcRn, FreeVars)

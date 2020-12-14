@@ -86,6 +86,8 @@ import qualified GHC.LanguageExtensions as LangExt
 import Data.Function
 import Data.List (partition, sortBy, groupBy, intersect)
 
+import GHC.Types.Fixity
+
 {-
 ************************************************************************
 *                                                                      *
@@ -934,7 +936,14 @@ tcExpr (ArithSeq _ witness seq) res_ty
 *                                                                      *
 ************************************************************************
 -}
-tcExpr (GetField _ _ _ _ (L _ g)) res_ty = tcExpr g res_ty
+
+tcExpr (GetField _ arg field mb_getField) res_ty
+ = do { -- See Note [Type-checking record dot syntax] (not written yet)
+        loc <- getSrcSpanM
+      ; case mb_getField of
+          Just getField -> tcExpr (mkGet loc getField arg field) res_ty
+          Nothing -> panic "tcExpr: GetField: Not implemented"
+      }
 tcExpr (Projection _ _ _ (L _ p)) res_ty = tcExpr p res_ty
 tcExpr (RecordDotUpd _ _ _ _ (L _ s)) res_ty = tcExpr s res_ty
 
@@ -1830,3 +1839,34 @@ checkClosedInStaticForm name = do
 -- When @n@ is not closed, we traverse the graph reachable from @n@ to build
 -- the reason.
 --
+
+-----------------------------------------
+-- Bits and pieces for RecordDotSyntax.
+
+mkParen :: SrcSpan -> LHsExpr GhcRn -> LHsExpr GhcRn
+mkParen loc = L loc . HsPar noExtField
+
+mkApp :: SrcSpan -> LHsExpr GhcRn -> LHsExpr GhcRn -> LHsExpr GhcRn
+mkApp loc x = L loc . HsApp noExtField x
+
+_mkOpApp :: LHsExpr GhcRn -> LHsExpr GhcRn -> LHsExpr GhcRn -> LHsExpr GhcRn
+_mkOpApp x op = noLoc . OpApp (Fixity NoSourceText minPrecedence InfixL) x op
+
+mkAppType :: SrcSpan -> LHsExpr GhcRn -> GenLocated SrcSpan (HsType (NoGhcTc GhcRn)) -> LHsExpr GhcRn
+mkAppType loc expr = L loc . HsAppType noExtField expr . mkEmptyWildCardBndrs
+
+mkSelector :: SrcSpan -> FastString -> LHsType GhcRn
+mkSelector loc = L loc . HsTyLit noExtField . HsStrTy NoSourceText
+
+-- mkGet arg field calcuates a get_field @field arg expression.
+-- e.g. z.x = mkGet z x = get_field @x z
+mkGet :: SrcSpan -> Name -> LHsExpr GhcRn -> Located FastString -> HsExpr GhcRn
+mkGet loc get_field arg field = unLoc (head $ mkGet' loc get_field [arg] field)
+
+mkGet' :: SrcSpan -> Name -> [LHsExpr GhcRn] -> Located FastString -> [LHsExpr GhcRn]
+mkGet' loc get_field l@(r : _) (L _ field) =
+  mkApp loc (mkAppType loc (L loc (HsVar noExtField (L loc get_field)))
+               (mkSelector loc field)) (mkParen loc r)
+  : l
+
+mkGet' _ _ [] _ = panic "mkGet' : The impossible has happened!"

@@ -2763,7 +2763,6 @@ mkGetField loc arg field =
     , gf_expr = arg
     , gf_field = field
     , gf_get_field = Nothing
-    , gf_getField = mkGet arg field
     }
 
 mkProjection :: SrcSpan -> [Located FastString] -> LHsExpr GhcPs

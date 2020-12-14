@@ -495,7 +495,6 @@ data HsExpr p
       , gf_expr :: LHsExpr p
       , gf_field :: Located FastString
       , gf_get_field :: Maybe (IdP p)
-      , gf_getField :: LHsExpr p -- Desugared equivalent 'getField' term.
       }
   -- ^ @Just id@ means @RebindableSyntax@ is in use and gives the id
   --   of the in-scope 'getField'.

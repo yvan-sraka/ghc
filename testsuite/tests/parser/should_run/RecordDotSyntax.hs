@@ -7,6 +7,9 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
 
+{-# LANGUAGE RebindableSyntax #-}
+import Prelude
+
 -- Choice (C2a).
 
 import Data.Function -- for &
