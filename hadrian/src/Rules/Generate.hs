@@ -52,6 +52,7 @@ compilerDependencies = do
     libDir <- expr $ stageLibPath stage
     mconcat [ return $ (libDir -/-) <$> derivedConstantsFiles
             , notStage0 ? return ((rtsPath -/-) <$> libffiHeaderFiles)
+            , return $ ((rtsPath -/-) <$> [ "EventTypes.h"])
             , return $ fmap (ghcPath -/-)
                   [ "primop-can-fail.hs-incl"
                   , "primop-code-size.hs-incl"

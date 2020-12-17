@@ -4,6 +4,8 @@ import Packages (rts, rtsBuildPath, libffiBuildPath, libffiLibraryName, rtsConte
 import Rules.Libffi
 import Hadrian.Utilities
 import Settings.Builders.Common
+import Utilities (build)
+import Hadrian.Target
 
 -- | This rule has priority 3 to override the general rule for generating shared
 -- library files (see Rules.Library.libraryRules).
@@ -20,6 +22,23 @@ rtsRules = priority 3 $ do
       |%> \ rtsLibFilePath' -> createFileLink
             (addRtsDummyVersion $ takeFileName rtsLibFilePath')
             rtsLibFilePath'
+
+    -- Event log defines and constants
+    let eventLogConstants :: Stage -> Rules ()
+        eventLogConstants stage = do
+            let context = rtsContext stage
+                rtsPath = root -/- buildDir context --interpretInContext context (rtsBuildPath stage)
+            rtsPath -/- "EventTypes.h" %> \dest -> do
+                build $ target context Python
+                  ["rts/gen_event_types.py", "--event-types-array", dest]
+                  [dest]
+
+            rtsPath -/- "EventLogConstants.h" %> \dest -> do
+                build $ target context Python
+                  ["rts/gen_event_types.py", "--event-types-defines", dest]
+                  [dest]
+
+    mapM_ eventLogConstants [Stage1, Stage2, Stage3]
 
     -- Libffi
     forM_ [Stage1 ..] $ \ stage -> do
