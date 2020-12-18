@@ -520,6 +520,10 @@ hs_exit_(bool wait_foreign)
     // also outputs the stats (+RTS -s) info.
     exitStorage();
 
+    /* flush and clean up capabilities' eventlog buffers before cleaning up
+     * scheduler */
+    finishCapEventLogging();
+
     /* free the tasks */
     freeScheduler();
 
