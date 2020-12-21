@@ -247,14 +247,6 @@ get_n_capabilities(void)
 void
 initEventLogging()
 {
-    init_event_types();
-
-    int num_descs = sizeof(EventDesc) / sizeof(char*);
-    if (num_descs != NUM_GHC_EVENT_TAGS) {
-        barf("EventDesc array has the wrong number of elements (%d, NUM_GHC_EVENT_TAGS=%d)",
-             num_descs, NUM_GHC_EVENT_TAGS);
-    }
-
     /*
      * Allocate buffer(s) to store events.
      * Create buffer large enough for the header begin marker, all event

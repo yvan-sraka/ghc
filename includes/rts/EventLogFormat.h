@@ -68,7 +68,6 @@
 /*
  * The highest event code +1 that ghc itself emits. Note that some event
  * ranges higher than this are reserved but not currently emitted by ghc.
- * This must match the size of the EventDesc[] array in EventLog.c
  */
 #define NUM_GHC_EVENT_TAGS        212
 
