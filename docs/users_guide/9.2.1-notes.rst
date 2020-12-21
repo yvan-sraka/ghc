@@ -81,6 +81,10 @@ Compiler
   will have to be updated, as GHC no longer uses flattening skolems or
   flattening metavariables.
 
+- The ``-xt`` RTS flag has been removed. Now STACK and TSO closures are always
+  included in heap profiles. Tooling can choose to filter out these closure types
+  if necessary.
+
 ``ghc-prim`` library
 ~~~~~~~~~~~~~~~~~~~~
 

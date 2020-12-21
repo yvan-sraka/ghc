@@ -213,7 +213,6 @@ void initRtsFlagsDefaults(void)
     RtsFlags.ProfFlags.heapProfileInterval = USToTime(100000); // 100ms
 
 #if defined(PROFILING)
-    RtsFlags.ProfFlags.includeTSOs        = false;
     RtsFlags.ProfFlags.showCCSOnException = false;
     RtsFlags.ProfFlags.maxRetainerSetSize = 8;
     RtsFlags.ProfFlags.ccsLength          = 25;
@@ -1676,14 +1675,6 @@ error = true;
                     OPTION_SAFE;
                     PROFILING_BUILD_ONLY(
                         RtsFlags.ProfFlags.showCCSOnException = true;
-                        );
-                    unchecked_arg_start++;
-                    goto check_rest;
-
-                case 't':  /* Include memory used by TSOs in a heap profile */
-                    OPTION_SAFE;
-                    PROFILING_BUILD_ONLY(
-                        RtsFlags.ProfFlags.includeTSOs = true;
                         );
                     unchecked_arg_start++;
                     goto check_rest;
