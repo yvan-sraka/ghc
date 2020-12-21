@@ -23,23 +23,6 @@ rtsRules = priority 3 $ do
             (addRtsDummyVersion $ takeFileName rtsLibFilePath')
             rtsLibFilePath'
 
-    -- Event log defines and constants
-    let eventLogConstants :: Stage -> Rules ()
-        eventLogConstants stage = do
-            let context = rtsContext stage
-                rtsPath = root -/- buildDir context --interpretInContext context (rtsBuildPath stage)
-            rtsPath -/- "EventTypes.h" %> \dest -> do
-                build $ target context Python
-                  ["rts/gen_event_types.py", "--event-types-array", dest]
-                  [dest]
-
-            rtsPath -/- "EventLogConstants.h" %> \dest -> do
-                build $ target context Python
-                  ["rts/gen_event_types.py", "--event-types-defines", dest]
-                  [dest]
-
-    mapM_ eventLogConstants [Stage1, Stage2, Stage3]
-
     -- Libffi
     forM_ [Stage1 ..] $ \ stage -> do
         let buildPath = root -/- buildDir (rtsContext stage)

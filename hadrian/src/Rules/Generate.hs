@@ -52,7 +52,7 @@ compilerDependencies = do
     libDir <- expr $ stageLibPath stage
     mconcat [ return $ (libDir -/-) <$> derivedConstantsFiles
             , notStage0 ? return ((rtsPath -/-) <$> libffiHeaderFiles)
-            , return $ ((rtsPath -/-) <$> [ "EventTypes.h"])
+            , return $ ((rtsPath -/-) <$> ["EventTypes.h"])
             , return $ fmap (ghcPath -/-)
                   [ "primop-can-fail.hs-incl"
                   , "primop-code-size.hs-incl"
@@ -135,6 +135,10 @@ generatePackageCode context@(Context stage pkg _) = do
         (root -/- "**" -/- dir -/- "ghcautoconf.h") <~ stageLibPath stage
         (root -/- "**" -/- dir -/- "ghcplatform.h") <~ stageLibPath stage
         (root -/- "**" -/- dir -/- "ghcversion.h") <~ stageLibPath stage
+        (root -/- "**" -/- "EventTypes.h") %> \file ->
+            runBuilder Python
+              ["rts" -/- "gen_event_types.py", "--event-types-array", file]
+              [] []
  where
     pattern <~ mdir = pattern %> \file -> do
         dir <- mdir

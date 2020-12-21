@@ -52,7 +52,7 @@ event_types = [
     EventType(15, 'CREATE_SPARK_THREAD', [ThreadId],                  'Create spark thread'),
     EventType(16, 'LOG_MSG',          VariableLength,                 'Log message'),
     # 18 deprecated
-    EventType(18, 'EVENT_BLOCK_MARKER', [Word32, Timestamp, CapNo],   'Block marker'),
+    EventType(18, 'BLOCK_MARKER',     [Word32, Timestamp, CapNo],     'Block marker'),
     EventType(19, 'USER_MSG',         VariableLength,                 'User message'),
     EventType(20, 'GC_IDLE',          [],                             'GC idle'),
     EventType(21, 'GC_WORK',          [],                             'GC working'),
