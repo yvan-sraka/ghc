@@ -1380,6 +1380,9 @@ error = true;
 #if !defined(PROFILING)
                 switch (rts_argv[arg][2]) {
                   case '\0':
+                    errorBelch("-h is deprecated and will be removed in the next release (9.4),\nuse -hT instead.");
+
+                    FALLTHROUGH;
                   case 'T':
                     OPTION_UNSAFE;
                     RtsFlags.ProfFlags.doHeapProfile = HEAP_BY_CLOSURE_TYPE;
@@ -2122,6 +2125,8 @@ static bool read_heap_profiling_flag(const char *arg)
     bool error = false;
     switch (arg[2]) {
     case '\0':
+      errorBelch("-h is deprecated and will be removed in the next release (9.4),\nuse -hc instead.");
+      FALLTHROUGH;
     case 'C':
     case 'c':
     case 'M':
