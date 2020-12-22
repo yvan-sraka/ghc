@@ -1541,8 +1541,8 @@ tcEqType :: HasDebugCallStack => TcType -> TcType -> Bool
 -- ^ tcEqType implements typechecker equality, as described in
 -- @Note [Typechecker equality vs definitional equality]@.
 tcEqType ty1 ty2
-  =  tc_eq_type False False ki1 ki2
-  && tc_eq_type False False ty1 ty2
+  =  tc_eq_type_no_syns ki1 ki2
+  && tc_eq_type_no_syns ty1 ty2
   where
     ki1 = tcTypeKind ty1
     ki2 = tcTypeKind ty2
@@ -1551,7 +1551,11 @@ tcEqType ty1 ty2
 -- as long as their non-coercion structure is identical.
 tcEqTypeNoKindCheck :: TcType -> TcType -> Bool
 tcEqTypeNoKindCheck ty1 ty2
-  = tc_eq_type False False ty1 ty2
+  = tc_eq_type_no_syns ty1 ty2
+
+-- See Note [Specialising tc_eq_type].
+tc_eq_type_no_syns :: Type -> Type -> Bool
+tc_eq_type_no_syns ta tb = tc_eq_type False False ta tb
 
 -- | Like 'tcEqType', but returns True if the /visible/ part of the types
 -- are equal, even if they are really unequal (in the invisible bits)
@@ -1574,6 +1578,21 @@ tcEqTyConApps tc1 args1 tc2 args2
     -- No kind check necessary: if both arguments are well typed, then
     -- any difference in the kinds of later arguments would show up
     -- as differences in earlier (dependent) arguments
+
+{-
+Note [Specialising tc_eq_type]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The type equality predicates in TcType are hit pretty hard during typechecking.
+Consequently we take pains to ensure that these paths are compiled to
+efficient, minimally-allocating code.
+
+To this end we place an INLINE on tc_eq_type, ensuring that it is inlined into
+its publicly-visible interfaces (e.g. tcEqType). In addition to eliminating
+some dynamic branches, this allows the simplifier to eliminate the closure
+allocations that would otherwise be necessary to capture the two boolean "mode"
+flags. This reduces allocations by a good fraction of a percent when compiling
+Cabal.
+-}
 
 -- | Real worker for 'tcEqType'. No kind check!
 tc_eq_type :: Bool          -- ^ True <=> do not expand type synonyms
@@ -1667,6 +1686,7 @@ tc_eq_type keep_syns vis_only orig_ty1 orig_ty2
           = go env w w' && go env arg arg' && go env res res'
         get_args _ _    = False
     eqFunTy _ _ _ _ _   = False
+{-# INLINE tc_eq_type #-} -- See Note [Specialising tc_eq_type].
 
 {- Note [Typechecker equality vs definitional equality]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
