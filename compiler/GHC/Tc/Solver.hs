@@ -30,7 +30,7 @@ module GHC.Tc.Solver(
 import GHC.Prelude
 
 import GHC.Data.Bag
-import GHC.Core.Class ( Class, classKey, classTyCon, classTvsFds )
+import GHC.Core.Class
 import GHC.Driver.Session
 import GHC.Types.Id   ( idType )
 import GHC.Tc.Utils.Instantiate
@@ -59,6 +59,7 @@ import GHC.Builtin.Types ( liftedRepTy, manyDataConTy )
 import GHC.Core.Unify    ( tcMatchTyKi )
 import GHC.Utils.Misc
 import GHC.Utils.Panic
+import GHC.Types.Unique.Set
 import GHC.Types.Var
 import GHC.Types.Var.Set
 import GHC.Types.Basic    ( IntWithInf, intGtLimit )
@@ -69,9 +70,8 @@ import Control.Monad
 import Data.Foldable      ( toList )
 import Data.List          ( partition )
 import Data.List.NonEmpty ( NonEmpty(..) )
-import GHC.Data.Maybe     ( mapMaybe )
-
-import GHC.Driver.Ppr
+import GHC.Data.Maybe     ( mapMaybe, maybeToList )
+import qualified Data.Semigroup as S
 
 {-
 *********************************************************************************
@@ -963,27 +963,22 @@ simplifyInfer rhs_tclvl infer_mode sigs name_taus wanteds
                               -- NB: must include derived errors in this test,
                               --     hence "incl_derivs"
              wanted_transformed = dropDerivedWC wanted_transformed_incl_derivs
-             (quant_ct_candidates, residual_wc)
-               | definite_error = (emptyBag, wanted_transformed)
+             (quant_ct_candidates, residual_wc, did_fds_combine)
+               | definite_error = (emptyBag, wanted_transformed, mempty)
                | otherwise      = approximateWC False wanted_transformed
 
-       -- "RAE": comment why we do this (to float fundeps out for e.g. typecheck/should_fail/FloatFDs)
-       -- "RAE": do this only when we have floated out two constraints from the same fun-dep-bearing class
-       -- in approximateWC, above
-       ; simplified_wc
-           <- setTcLevel rhs_tclvl $
-              runTcSWithEvBinds ev_binds_var $
-              do { before <- TcS.readTcRef (ebv_binds ev_binds_var)
-                 ; pprTraceM "RAE1" (ppr before)
-                 ; traceTcS "simplifying approximateWC {" (ppr quant_ct_candidates)
-                 ; wc_candidates <- solveSimpleWanteds quant_ct_candidates
-                 ; traceTcS "simplifying approximateWC }" (ppr wc_candidates)
-                 ; after <- TcS.readTcRef (ebv_binds ev_binds_var)
-                 ; pprTraceM "RAE2" (ppr after)
-                 ; MASSERT2( isEmptyBag (wc_impl wc_candidates), ppr wc_candidates )
-                 ; MASSERT2( isEmptyBag (wc_holes wc_candidates), ppr wc_candidates )
-                 ; return wc_candidates }
-       ; let quant_pred_candidates = ctsPreds (wc_simple simplified_wc)
+       -- See Note [Simplifying the approximated WC]
+       ; (quant_pred_candidates, simplified_wc) <- case did_fds_combine of
+           NoCombinationYet _ -> do { traceTc "skipping simplifying the approximated WC"
+                                              (ppr quant_ct_candidates)
+                                    ; return (ctsPreds quant_ct_candidates, emptyWC) }
+           YesFDsCombined
+             -> do { traceTc "simplifying approximateWC {" (ppr quant_ct_candidates)
+                   ; simplified_wc <- setTcLevel rhs_tclvl $
+                                      runTcSWithEvBinds ev_binds_var $
+                                      solveSimpleWanteds quant_ct_candidates
+                   ; traceTc "simplifying approximateWC }" (ppr simplified_wc)
+                   ; return (ctsPreds (wc_simple simplified_wc), simplified_wc) }
 
        -- Decide what type variables and constraints to quantify
        -- NB: quant_pred_candidates is already fully zonked
@@ -2436,32 +2431,41 @@ defaultTyVarTcS the_tv
   | otherwise
   = return False  -- the common case
 
-approximateWC :: Bool -> WantedConstraints -> (Cts, WantedConstraints)
+approximateWC :: Bool -> WantedConstraints -> (Cts, WantedConstraints, DidFDsCombine)
 -- Second return value is the depleted wc
+-- Third return value is YesFDsCombined <=> multiple constraints for the same fundep floated
+-- See Note [Simplifying the approximated WC]
 -- Postcondition: Wanted or Derived Cts
 -- See Note [ApproximateWC]
 -- See Note [floatKindEqualities vs approximateWC]
 approximateWC float_past_equalities wc
   = float_wc emptyVarSet wc
   where
-    float_wc :: TcTyCoVarSet -> WantedConstraints -> (Cts, WantedConstraints)
+    float_wc :: TcTyCoVarSet -> WantedConstraints -> (Cts, WantedConstraints, DidFDsCombine)
     float_wc trapping_tvs old_wc@(WC { wc_simple = simples, wc_impl = implics })
       = ( floated_from_simple `unionBags` floated_from_implics
         , old_wc { wc_simple = cannot_float_simple
-                 , wc_impl   = new_implics } )
+                 , wc_impl   = new_implics }
+        , NoCombinationYet (mkUniqSet floated_fd_classes) S.<> fds_combined_from_implics )
       where
         (floated_from_simple, cannot_float_simple)
           = partitionBag (is_floatable trapping_tvs) simples
-        (floated_from_implics, new_implics)
-          = concatMapBagPair (float_implic trapping_tvs) implics
+        floated_fd_classes
+          = [ cls
+            | one_floater <- bagToList floated_from_simple
+            , (cls, _) <- maybeToList $ getClassPredTys_maybe (ctPred one_floater)
+            , classHasFds cls ]
+        (floated_from_implics, new_implics, fds_combined_from_implics)
+          = foldMap (float_implic trapping_tvs) implics
+            -- should this be foldMap'?
 
-    float_implic :: TcTyCoVarSet -> Implication -> (Cts, Bag Implication)
+    float_implic :: TcTyCoVarSet -> Implication -> (Cts, Bag Implication, DidFDsCombine)
     float_implic trapping_tvs imp
       | float_past_equalities || ic_given_eqs imp /= MaybeGivenEqs
-      = let (floaters, new_wc) = float_wc new_trapping_tvs (ic_wanted imp) in
-        (floaters, unitBag $ imp { ic_wanted = new_wc })
-      | otherwise                  -- Take care with equalities
-      = (emptyCts, unitBag imp)    -- See (1) under Note [ApproximateWC]
+      = let (floaters, new_wc, fds_combined) = float_wc new_trapping_tvs (ic_wanted imp) in
+        (floaters, unitBag $ imp { ic_wanted = new_wc }, fds_combined)
+      | otherwise                          -- Take care with equalities
+      = (emptyCts, unitBag imp, mempty)    -- See (1) under Note [ApproximateWC]
       where
         new_trapping_tvs = trapping_tvs `extendVarSetList` ic_skols imp
 
@@ -2469,6 +2473,21 @@ approximateWC float_past_equalities wc
        | isGivenCt ct     = False
        | insolubleEqCt ct = False
        | otherwise        = tyCoVarsOfCt ct `disjointVarSet` skol_tvs
+
+data DidFDsCombine
+  = NoCombinationYet (UniqSet Class)
+      -- set of classes that have at least one constraint
+      -- INVARIANT: each class has at least one FD
+  | YesFDsCombined
+
+instance Semigroup DidFDsCombine where
+  NoCombinationYet set1 <> NoCombinationYet set2
+    | disjointUniqSets set1 set2 = NoCombinationYet (set1 `unionUniqSets` set2)
+
+  _ <> _ = YesFDsCombined
+
+instance Monoid DidFDsCombine where
+  mempty = NoCombinationYet emptyUniqSet
 
 {- Note [ApproximateWC]
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -2529,6 +2548,50 @@ you want.  So I simply removed the extra code to implement the
 contamination stuff.  There was zero effect on the testsuite (not even #8155).
 ------ End of historical note -----------
 
+Note [Simplifying the approximated WC]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Suppose we have
+
+  class C a b | a -> b
+
+and we are running simplifyInfer over
+
+  forall[2] x. () => [W] C a beta1[1]
+  forall[2] y. () => [W] C a beta2[1]
+
+These are two implication constraints, both of which contain a
+wanted for the class C. Neither constraint mentions the bound
+skolem. We might imagine that these constraint could thus float
+out of their implications and then interact, causing beta1 to unify
+with beta2.
+
+Unifying these is important. Without doing so, then we might infer
+a type like (C a b1, C a b2) => a -> a, which will fail to pass the
+ambiguity check, which will say (rightly) that it cannot unify b1
+with b2, as required by the fundep interactions. This happens in
+the parsec library, and in test case typecheck/should_compile/FloatFDs.
+
+The solution is to run the simplifier *again* after running approximateWC.
+This will interact the C a betaX inerts and indeed unify beta1 := beta2
+before quantification.
+
+Here are the details:
+
+1. Because the re-simplification happens only for the reason of
+   interacting fundeps, we do it only when we observe two constraints
+   from the same class floated out of two different implications.
+   This logic is contained within approximateWC, in its third return value.
+   This is just an optimization to avoid walking over the constraints
+   unnecessarily. It should be possible to skip this without changing
+   correctness.
+
+2. The residual constraint emitted from simplifyInfer must include
+   any constraints not floated out in approximateWC, but also must
+   include the constraints left after the second simplification described
+   in this Note. Yet we don't want duplicates, which could lead to
+   duplicate error messages. We thus carefully compute the depleted
+   WantedConstraints in approximateWC. The two WantedConstraints are
+   cobined in the call to mkResidualConstraints in simplifyInfer.
 
 Note [DefaultTyVar]
 ~~~~~~~~~~~~~~~~~~~
@@ -2657,7 +2720,7 @@ findDefaultableGroups (default_tys, (ovl_strings, extended_defaults)) wanteds
     , defaultable_tyvar tv
     , defaultable_classes (map sndOf3 group) ]
   where
-    (simples, _)           = approximateWC True wanteds
+    (simples, _, _)        = approximateWC True wanteds
     (unaries, non_unaries) = partitionWith find_unary (bagToList simples)
     unary_groups           = equivClasses cmp_tv unaries
 
