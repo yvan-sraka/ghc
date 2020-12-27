@@ -71,6 +71,8 @@ import Data.List          ( partition )
 import Data.List.NonEmpty ( NonEmpty(..) )
 import GHC.Data.Maybe     ( mapMaybe )
 
+import GHC.Driver.Ppr
+
 {-
 *********************************************************************************
 *                                                                               *
@@ -961,9 +963,27 @@ simplifyInfer rhs_tclvl infer_mode sigs name_taus wanteds
                               -- NB: must include derived errors in this test,
                               --     hence "incl_derivs"
              wanted_transformed = dropDerivedWC wanted_transformed_incl_derivs
-             quant_pred_candidates
-               | definite_error = []
-               | otherwise      = ctsPreds (approximateWC False wanted_transformed)
+             (quant_ct_candidates, residual_wc)
+               | definite_error = (emptyBag, wanted_transformed)
+               | otherwise      = approximateWC False wanted_transformed
+
+       -- "RAE": comment why we do this (to float fundeps out for e.g. typecheck/should_fail/FloatFDs)
+       -- "RAE": do this only when we have floated out two constraints from the same fun-dep-bearing class
+       -- in approximateWC, above
+       ; simplified_wc
+           <- setTcLevel rhs_tclvl $
+              runTcSWithEvBinds ev_binds_var $
+              do { before <- TcS.readTcRef (ebv_binds ev_binds_var)
+                 ; pprTraceM "RAE1" (ppr before)
+                 ; traceTcS "simplifying approximateWC {" (ppr quant_ct_candidates)
+                 ; wc_candidates <- solveSimpleWanteds quant_ct_candidates
+                 ; traceTcS "simplifying approximateWC }" (ppr wc_candidates)
+                 ; after <- TcS.readTcRef (ebv_binds ev_binds_var)
+                 ; pprTraceM "RAE2" (ppr after)
+                 ; MASSERT2( isEmptyBag (wc_impl wc_candidates), ppr wc_candidates )
+                 ; MASSERT2( isEmptyBag (wc_holes wc_candidates), ppr wc_candidates )
+                 ; return wc_candidates }
+       ; let quant_pred_candidates = ctsPreds (wc_simple simplified_wc)
 
        -- Decide what type variables and constraints to quantify
        -- NB: quant_pred_candidates is already fully zonked
@@ -989,7 +1009,8 @@ simplifyInfer rhs_tclvl infer_mode sigs name_taus wanteds
        -- Now construct the residual constraint
        ; residual_wanted <- mkResidualConstraints rhs_tclvl ev_binds_var
                                  name_taus co_vars qtvs bound_theta_vars
-                                 (wanted_transformed `andWC` mkSimpleWC psig_wanted)
+                                 (residual_wc `andWC` simplified_wc
+                                  `andWC` mkSimpleWC psig_wanted)
 
          -- All done!
        ; traceTc "} simplifyInfer/produced residual implication for quantification" $
@@ -2415,23 +2436,32 @@ defaultTyVarTcS the_tv
   | otherwise
   = return False  -- the common case
 
-approximateWC :: Bool -> WantedConstraints -> Cts
+approximateWC :: Bool -> WantedConstraints -> (Cts, WantedConstraints)
+-- Second return value is the depleted wc
 -- Postcondition: Wanted or Derived Cts
 -- See Note [ApproximateWC]
 -- See Note [floatKindEqualities vs approximateWC]
 approximateWC float_past_equalities wc
   = float_wc emptyVarSet wc
   where
-    float_wc :: TcTyCoVarSet -> WantedConstraints -> Cts
-    float_wc trapping_tvs (WC { wc_simple = simples, wc_impl = implics })
-      = filterBag (is_floatable trapping_tvs) simples `unionBags`
-        concatMapBag (float_implic trapping_tvs) implics
-    float_implic :: TcTyCoVarSet -> Implication -> Cts
+    float_wc :: TcTyCoVarSet -> WantedConstraints -> (Cts, WantedConstraints)
+    float_wc trapping_tvs old_wc@(WC { wc_simple = simples, wc_impl = implics })
+      = ( floated_from_simple `unionBags` floated_from_implics
+        , old_wc { wc_simple = cannot_float_simple
+                 , wc_impl   = new_implics } )
+      where
+        (floated_from_simple, cannot_float_simple)
+          = partitionBag (is_floatable trapping_tvs) simples
+        (floated_from_implics, new_implics)
+          = concatMapBagPair (float_implic trapping_tvs) implics
+
+    float_implic :: TcTyCoVarSet -> Implication -> (Cts, Bag Implication)
     float_implic trapping_tvs imp
       | float_past_equalities || ic_given_eqs imp /= MaybeGivenEqs
-      = float_wc new_trapping_tvs (ic_wanted imp)
-      | otherwise   -- Take care with equalities
-      = emptyCts    -- See (1) under Note [ApproximateWC]
+      = let (floaters, new_wc) = float_wc new_trapping_tvs (ic_wanted imp) in
+        (floaters, unitBag $ imp { ic_wanted = new_wc })
+      | otherwise                  -- Take care with equalities
+      = (emptyCts, unitBag imp)    -- See (1) under Note [ApproximateWC]
       where
         new_trapping_tvs = trapping_tvs `extendVarSetList` ic_skols imp
 
@@ -2627,7 +2657,7 @@ findDefaultableGroups (default_tys, (ovl_strings, extended_defaults)) wanteds
     , defaultable_tyvar tv
     , defaultable_classes (map sndOf3 group) ]
   where
-    simples                = approximateWC True wanteds
+    (simples, _)           = approximateWC True wanteds
     (unaries, non_unaries) = partitionWith find_unary (bagToList simples)
     unary_groups           = equivClasses cmp_tv unaries
 
