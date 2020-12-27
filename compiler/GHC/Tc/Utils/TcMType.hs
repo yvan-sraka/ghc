@@ -2541,7 +2541,10 @@ naughtyQuantification orig_ty tv escapees
 -- one is found that is not yet filled in, at which point this aborts.
 anyUnfilledCoercionHoles :: RewriterSet -> TcM Bool
 anyUnfilledCoercionHoles (RewriterSet set)
-  = nonDetFoldUniqSet go (return False) set
+  = nonDetStrictFoldUniqSet go (return False) set
+     -- this does not introduce non-determinism, because the only
+     -- monadic action is to read, and the combining function is
+     -- commutative
   where
     go :: CoercionHole -> TcM Bool -> TcM Bool
     go hole m_acc = m_acc <||> check_hole hole

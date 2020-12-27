@@ -61,7 +61,6 @@ import Data.List.NonEmpty ( NonEmpty(..) )
 
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Maybe
-import Control.Arrow ( second )
 
 {-
 **********************************************************************
@@ -1276,7 +1275,7 @@ improveLocalFunEqs work_ev inerts fam_tc args rhs
     fam_inj_info  = tyConInjectivityInfo fam_tc
 
     --------------------
-    improvement_eqns :: [FunDepEqn CtLoc]
+    improvement_eqns :: [FunDepEqn (CtLoc, RewriterSet)]
     improvement_eqns
       | Just ops <- isBuiltInSynFamTyCon_maybe fam_tc
       =    -- Try built-in families, notably for arithmethic
@@ -1811,8 +1810,7 @@ improveTopFunEqs ev fam_tc args rhs
        ; eqns <- improve_top_fun_eqs fam_envs fam_tc args rhs
        ; traceTcS "improveTopFunEqs" (vcat [ ppr fam_tc <+> ppr args <+> ppr rhs
                                           , ppr eqns ])
-       ; mapM_ (\(Pair ty1 ty2) -> unifyWanted (new_rewriters S.<> rewriters)
-                                               loc Nominal ty1 ty2) eqns }
+       ; mapM_ (\(Pair ty1 ty2) -> unifyWanted rewriters loc Nominal ty1 ty2) eqns }
   where
     loc = bumpCtLocDepth (ctEvLoc ev)
         -- ToDo: this location is wrong; it should be FunDepOrigin2
@@ -2021,7 +2019,7 @@ chooseInstance work_item
                   -- See Note [Instances in no-evidence implications]
 
                 else
-           do { evc_vars <- mapM (newWanted deeper_loc) theta
+           do { evc_vars <- mapM (newWanted deeper_loc (ctRewriters work_item)) theta
               ; setEvBindIfWanted ev (mk_ev (map getEvExpr evc_vars))
               ; emitWorkNC (freshGoals evc_vars)
               ; stopWith ev "Dict/Top (solved wanted)" }}}

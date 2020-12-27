@@ -29,6 +29,7 @@ import GHC.Driver.Session
 import GHC.Utils.Outputable
 import GHC.Utils.Panic
 import GHC.Tc.Solver.Monad as TcS
+import GHC.Tc.Types    ( TcRef )
 
 import GHC.Utils.Misc
 import GHC.Data.Maybe
@@ -247,7 +248,7 @@ rewrite :: CtEvidence -> TcType
         -> TcS (Xi, TcCoercion, RewriterSet)
 rewrite ev ty
   = do { traceTcS "rewrite {" (ppr ty)
-       ; (ty', co, rewriters) <- runRewriteCtEv ev (rewrite_one ty)
+       ; ((ty', co), rewriters) <- runRewriteCtEv ev (rewrite_one ty)
        ; traceTcS "rewrite }" (ppr ty' $$ ppr rewriters)
        ; return (ty', co, rewriters) }
 
@@ -973,7 +974,7 @@ rewrite_tyvar2 tv fr@(_, eq_rel)
                       , cc_rhs = rhs_ty, cc_eq_rel = ct_eq_rel } <- ct
              , let ct_fr = (ctEvFlavour ctev, ct_eq_rel)
              , ct_fr `eqCanRewriteFR` fr  -- This is THE key call of eqCanRewriteFR
-             -> do { let wrw = ct_fr `wantedRewriterWanted` fr
+             -> do { let wrw = ct_fr `wantedRewriteWanted` fr
                    ; traceRewriteM "Following inert tyvar" $
                         vcat [ ppr tv <+> equals <+> ppr rhs_ty
                              , ppr ctev

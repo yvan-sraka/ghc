@@ -2427,7 +2427,10 @@ canEqCanLHSFinish ev eq_rel swapped lhs rhs
 -- (TyEq:N) is checked in can_eq_nc', and (TyEq:TV) is handled in canEqTyVarHomo
 
   = do { dflags <- getDynFlags
-       ; new_ev <- rewriteEqEvidence ev swapped lhs_ty rhs rewrite_co1 rewrite_co2
+
+          -- this performs the swap if necessary
+       ; new_ev <- rewriteEqEvidence emptyRewriterSet ev swapped
+                                     lhs_ty rhs rewrite_co1 rewrite_co2
 
      -- Must do the occurs check even on tyvar/tyvar
      -- equalities, in case have  x ~ (y :: ..x...)
@@ -2496,7 +2499,7 @@ rewriteCastedEquality :: CtEvidence     -- :: lhs ~ (rhs |> mco), or (rhs |> mco
                       -> TcS CtEvidence -- :: (lhs |> sym mco) ~ rhs
                                         -- result is independent of SwapFlag
 rewriteCastedEquality ev eq_rel swapped lhs rhs mco
-  = rewriteEqEvidence ev swapped new_lhs new_rhs lhs_co rhs_co
+  = rewriteEqEvidence emptyRewriterSet ev swapped new_lhs new_rhs lhs_co rhs_co
   where
     new_lhs = lhs `mkCastTyMCo` sym_mco
     lhs_co  = mkTcGReflLeftMCo role lhs sym_mco
@@ -3231,6 +3234,10 @@ unifyWanted rewriters loc role orig_ty1 orig_ty2
 unifyDeriveds :: CtLoc -> [Role] -> [TcType] -> [TcType] -> TcS ()
 -- See Note [unifyWanted and unifyDerived]
 unifyDeriveds loc roles tys1 tys2 = zipWith3M_ (unify_derived loc) roles tys1 tys2
+
+unifyDerived :: CtLoc -> Role -> Pair TcType -> TcS ()
+-- See Note [unifyWanted and unifyDerived]
+unifyDerived loc role (Pair ty1 ty2) = unify_derived loc role ty1 ty2
 
 unify_derived :: CtLoc -> Role -> TcType -> TcType -> TcS ()
 -- Create new Derived and put it in the work list

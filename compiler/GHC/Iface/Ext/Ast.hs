@@ -1247,13 +1247,12 @@ instance HiePass p => ToHie (RScoped (Located (HsLocalBinds (GhcPass p)))) where
         ]
 
 instance HiePass p => ToHie (RScoped (Located (IPBind (GhcPass p)))) where
-  toHie (RS scope (L sp bind)) = concatM $ makeNode bind sp : case bind of
-    IPBind _ (Left _) expr -> [toHie expr]
-    IPBind _ (Right v) expr ->
-      [ toHie $ C (EvidenceVarBind EvImplicitBind scope (getRealSpan sp))
-                  $ L sp v
-      , toHie expr
-      ]
+  toHie (RS scope (L sp bind@(IPBind v _ expr))) = concatM $ makeNode bind sp : case hiePass @p of
+    HieRn -> [toHie expr]
+    HieTc -> [ toHie $ C (EvidenceVarBind EvImplicitBind scope (getRealSpan sp))
+                       $ L sp v
+             , toHie expr
+             ]
 
 instance HiePass p => ToHie (RScoped (HsValBindsLR (GhcPass p) (GhcPass p))) where
   toHie (RS sc v) = concatM $ case v of

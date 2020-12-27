@@ -31,8 +31,6 @@ module GHC.Tc.Types.Constraint (
         CanEqLHS(..), canEqLHS_maybe, canEqLHSKind, canEqLHSType,
         eqCanEqLHS,
 
-        UnflattenInfo(..),
-
         Hole(..), HoleSort(..), isOutOfScopeHole,
 
         WantedConstraints(..), insolubleWC, emptyWC, isEmptyWC,
@@ -119,7 +117,6 @@ import Data.Coerce
 import Data.Monoid ( Endo(..) )
 import qualified Data.Semigroup as S
 import Control.Monad ( msum )
-import qualified Data.Semigroup ( (<>) )
 
 {-
 ************************************************************************
@@ -258,28 +255,6 @@ data QCInst  -- A much simplified version of ClsInst
 
 instance Outputable QCInst where
   ppr (QCI { qci_ev = ev }) = ppr ev
-
-------------
--- How should we unflatten a CFunEqCan? See Note [Wanteds rewrite CFunEqCans]
-data UnflattenInfo
-  = UseCurrentLHS
-  | UsePreviousLHS [(TcType, CoercionN)] -- (previous arg, co :: current ~N prev)
-
-instance Outputable UnflattenInfo where
-  ppr UseCurrentLHS         = text "UseCurrentLHS"
-  ppr (UsePreviousLHS args) = text "UsePreviousLHS" <+> ppr args
-
-addUnflattenInfo :: [TcType]       -- previous args
-                 -> [CoercionN]    -- each co :: current ~N previous; in 1-to-1
-                                   --   correspondence with TcTypes
-                 -> UnflattenInfo  -- previous UnflattenInfo
-                 -> UnflattenInfo
-addUnflattenInfo new_prevs  cos UseCurrentLHS = UsePreviousLHS (new_prevs `zip` cos)
-addUnflattenInfo _new_prevs cos (UsePreviousLHS old_infos)
-  = UsePreviousLHS [ (ty, co) | ((old_prev, old_co), new_co) <- old_infos `zip` cos
-                                 -- old_co :: new_prev ~ old_prev
-                                 -- new_co :: current ~ new_prev
-                              , let co = new_co `mkTcTransCo` old_co ]
 
 ------------
 -- | A hole stores the information needed to report diagnostics
@@ -1818,10 +1793,6 @@ are being reported.
 
 "RAE": Givens don't rewrite CtReportAs. But that's OK because givens
 get there first.
-
-Note [Wanteds rewrite CFunEqCans]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-"RAE" write note!
 
 Note [Deriveds do rewrite Deriveds]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -1740,7 +1740,7 @@ mkTyVarEqErr' dflags ctxt report item tv1 ty2
 
     -- This is wrinkle (4) in Note [Equalities with incompatible kinds] in
     -- GHC.Tc.Solver.Canonical
-  | MTVU_HoleBlocker <- occ_check_expand
+  | CTE_HoleBlocker <- occ_check_expand
   = mkBlockedEqErr ctxt item
 
   -- If the immediately-enclosing implication has 'tv' a skolem, and
@@ -1808,7 +1808,7 @@ mkTyVarEqErr' dflags ctxt report item tv1 ty2
         -- Consider an ambiguous top-level constraint (a ~ F a)
         -- Not an occurs check, because F is a type function.
   where
-    headline_msg = misMatchOrCND insoluble_occurs_check ctxt ct ty1 ty2
+    headline_msg = misMatchOrCND insoluble_occurs_check ctxt item ty1 ty2
 
     ty1 = mkTyVarTy tv1
     occ_check_expand       = occCheckForErrors dflags tv1 ty2
@@ -1848,7 +1848,7 @@ mkEqInfoMsg item ty1 ty2
 misMatchOrCND :: Bool -> ReportErrCtxt -> ErrorItem
               -> TcType -> TcType -> Report
 -- If oriented then ty1 is actual, ty2 is expected
-misMatchOrCND insoluble_occurs_check ctxt citem ty1 ty2
+misMatchOrCND insoluble_occurs_check ctxt item ty1 ty2
   | insoluble_occurs_check  -- See Note [Insoluble occurs check]
     || (isRigidTy ty1 && isRigidTy ty2)
     || (ei_flavour item == Given)

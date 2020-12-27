@@ -30,7 +30,7 @@ module GHC.Tc.Solver(
 import GHC.Prelude
 
 import GHC.Data.Bag
-import GHC.Core.Class ( Class, classKey, classTyCon, classHasFds, classTvsFds )
+import GHC.Core.Class ( Class, classKey, classTyCon, classTvsFds )
 import GHC.Driver.Session
 import GHC.Types.Id   ( idType )
 import GHC.Tc.Utils.Instantiate
@@ -63,7 +63,6 @@ import GHC.Types.Var
 import GHC.Types.Var.Set
 import GHC.Types.Basic    ( IntWithInf, intGtLimit )
 import GHC.Utils.Error    ( emptyMessages )
-import GHC.Data.FastString ( FastString )
 import qualified GHC.LanguageExtensions as LangExt
 
 import Control.Monad

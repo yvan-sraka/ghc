@@ -445,18 +445,14 @@ data CtOrigin
   | InstProvidedOrigin Module ClsInst
         -- Skolem variable arose when we were testing if an instance
         -- is solvable or not.
-<<<<<<< HEAD
   | NonLinearPatternOrigin
   | UsageEnvironmentOf Name
 
-||||||| merged common ancestors
-=======
   | WantedSuperclassOrigin PredType CtOrigin
         -- From expanding out the superclasses of a Wanted; the PredType
         -- is the subclass predicate, and the origin
         -- of the original Wanted is the CtOrigin
 
->>>>>>> # This is a combination of 13 commits.
 -- An origin is visible if the place where the constraint arises is manifest
 -- in user code. Currently, all origins are visible except for invisible
 -- TypeEqOrigins. This is used when choosing which error of

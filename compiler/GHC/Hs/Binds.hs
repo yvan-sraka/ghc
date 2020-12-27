@@ -829,37 +829,13 @@ type LIPBind id = XRec id (IPBind id)
 
 -- | Implicit parameter bindings.
 --
-<<<<<<< HEAD
--- These bindings start off as (Left "x") in the parser and stay
--- that way until after type-checking when they are replaced with
--- (Right d), where "d" is the name of the dictionary holding the
--- evidence for the implicit parameter.
---
--- - 'GHC.Parser.Annotation.AnnKeywordId' : 'GHC.Parser.Annotation.AnnEqual'
-||||||| merged common ancestors
--- These bindings start off as (Left "x") in the parser and stay
--- that way until after type-checking when they are replaced with
--- (Right d), where "d" is the name of the dictionary holding the
--- evidence for the implicit parameter.
---
 -- - 'ApiAnnotation.AnnKeywordId' : 'ApiAnnotation.AnnEqual'
-=======
--- - 'ApiAnnotation.AnnKeywordId' : 'ApiAnnotation.AnnEqual'
->>>>>>> # This is a combination of 13 commits.
 
 -- For details on above see note [Api annotations] in GHC.Parser.Annotation
 data IPBind id
   = IPBind
-<<<<<<< HEAD
-        (XCIPBind id)
-        (Either (XRec id HsIPName) (IdP id))
-||||||| merged common ancestors
-        (XCIPBind id)
-        (Either (Located HsIPName) (IdP id))
-=======
         (XCIPBind id)      -- unused in Ps, Rc; dictionary Id in Tc
         (Located HsIPName)
->>>>>>> # This is a combination of 13 commits.
         (LHsExpr id)
   | XIPBind !(XXIPBind id)
 
