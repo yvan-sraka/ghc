@@ -832,13 +832,13 @@ rewrite_exact_fam_app tc tys
        ; result2 <- liftTcS $ lookupFamAppInert tc xis
        ; flavour <- getFlavour
        ; case result2 of
-         { Just (co, xi, fr@(_, inert_eq_rel))
+         { Just (co, xi, fr@(inert_flavour, inert_eq_rel))
              -- co :: F xis ~ir xi
 
              | fr `eqCanRewriteFR` (flavour, eq_rel) ->
                  do { traceRewriteM "rewrite family application with inert"
                                 (ppr tc <+> ppr xis $$ ppr xi)
-                    ; finish True (homogenise xi downgraded_co) }
+                    ; finish (inert_flavour == Given) (homogenise xi downgraded_co) }
                -- this will sometimes duplicate an inert in the cache,
                -- but avoiding doing so had no impact on performance, and
                -- it seems easier not to weed out that special case
@@ -862,19 +862,18 @@ rewrite_exact_fam_app tc tys
       -- call this if the above attempts made progress.
       -- This recursively rewrites the result and then adds to the cache
     finish :: Bool  -- add to the cache?
+                    -- Precondition: True ==> input coercion has
+                    --                        no coercion holes
            -> (Xi, Coercion) -> RewriteM (Xi, Coercion)
     finish use_cache (xi, co)
       = do { -- rewrite the result: FINISH 1
              (fully, fully_co) <- bumpDepth $ rewrite_one xi
            ; let final_co = fully_co `mkTcTransCo` co
            ; eq_rel <- getEqRel
-           ; flavour <- getFlavour
 
              -- extend the cache: FINISH 2
-           ; when (use_cache && eq_rel == NomEq && flavour /= Derived) $
+           ; when (use_cache && eq_rel == NomEq) $
              -- the cache only wants Nominal eqs
-             -- and Wanteds can rewrite Deriveds; the cache
-             -- has only Givens
              liftTcS $ extendFamAppCache tc tys (final_co, fully)
            ; return (fully, final_co) }
     {-# INLINE finish #-}
