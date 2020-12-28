@@ -29,7 +29,7 @@ data TypedHole = TypedHole { th_relevant_cts :: Bag CtEvidence
                            -- ^ The nested implications of the hole with the
                            --   innermost implication first.
                            , th_hole :: Maybe Hole
-                           -- ^ The hole itself, if available. Only for debugging.
+                           -- ^ The hole itself, if available.
                            }
 
 instance Outputable TypedHole where

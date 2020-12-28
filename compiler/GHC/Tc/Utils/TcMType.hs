@@ -284,7 +284,7 @@ emitNewExprHole :: OccName   -- of the hole
                 -> Id        -- of the evidence
                 -> Type -> TcM ()
 emitNewExprHole occ ev_id ty
-  = do { loc <- getCtLocM (ExprHoleOrigin occ) (Just TypeLevel)
+  = do { loc <- getCtLocM (ExprHoleOrigin (Just occ)) (Just TypeLevel)
        ; let hole = Hole { hole_sort = ExprHole ev_id
                          , hole_occ  = getOccName ev_id
                          , hole_ty   = ty

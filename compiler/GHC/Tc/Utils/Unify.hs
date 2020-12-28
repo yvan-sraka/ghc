@@ -630,17 +630,15 @@ command. See Note [Implementing :type] in GHC.Tc.Module.
 -}
 
 ---------------
-tcSubTypeSigma :: UserTypeCtxt -> TcSigmaType -> TcSigmaType -> TcM HsWrapper
+tcSubTypeSigma :: CtOrigin       -- where did the actual type arise / why are we
+                                 -- doing this subtype check?
+               -> UserTypeCtxt   -- where did the expected type arise?
+               -> TcSigmaType -> TcSigmaType -> TcM HsWrapper
 -- External entry point, but no ExpTypes on either side
 -- Checks that actual <= expected
 -- Returns HsWrapper :: actual ~ expected
-tcSubTypeSigma ctxt ty_actual ty_expected
-  = tc_sub_type (unifyType Nothing) eq_orig ctxt ty_actual ty_expected
-  where
-    eq_orig = TypeEqOrigin { uo_actual   = ty_actual
-                           , uo_expected = ty_expected
-                           , uo_thing    = Nothing
-                           , uo_visible  = True }
+tcSubTypeSigma orig ctxt ty_actual ty_expected
+  = tc_sub_type (unifyType Nothing) orig ctxt ty_actual ty_expected
 
 ---------------
 tc_sub_type :: (TcType -> TcType -> TcM TcCoercionN)  -- How to unify

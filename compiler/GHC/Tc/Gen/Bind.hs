@@ -787,7 +787,7 @@ mkExport prag_fn residual insoluble qtvs theta
                                            -- an ambiguous type and have AllowAmbiguousType
                                            -- e..g infer  x :: forall a. F a -> Int
                   else addErrCtxtM (mk_impedance_match_msg mono_info sel_poly_ty poly_ty) $
-                       tcSubTypeSigma sig_ctxt sel_poly_ty poly_ty
+                       tcSubTypeSigma ImpedanceMatchOrigin sig_ctxt sel_poly_ty poly_ty
 
         ; warn_missing_sigs <- woptM Opt_WarnMissingLocalSignatures
         ; when warn_missing_sigs $
@@ -1088,7 +1088,6 @@ So we make a test, one per partial signature, to check that the
 explicitly-quantified type variables have not been unified together.
 #14449 showed this up.
 
-
 Note [Validity of inferred types]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 We need to check inferred type for validity, in case it uses language
@@ -1102,7 +1101,6 @@ Examples that might fail:
  - an inferred theta that requires type equalities e.g. (F a ~ G b)
                                 or multi-parameter type classes
  - an inferred type that includes unboxed tuples
-
 
 Note [Impedance matching]
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1141,10 +1139,7 @@ Notice that the impedance matcher may do defaulting.  See #7173.
 It also cleverly does an ambiguity check; for example, rejecting
    f :: F a -> F a
 where F is a non-injective type function.
--}
 
-
-{-
 Note [SPECIALISE pragmas]
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 There is no point in a SPECIALISE pragma for a non-overloaded function:

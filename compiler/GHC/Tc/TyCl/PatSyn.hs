@@ -459,7 +459,8 @@ tcCheckPatSynDecl psb@PSB{ psb_id = lname@(L _ name), psb_args = details
            -- Else the error message location is wherever tcCheckPat finished,
            -- namely the right-hand corner of the pattern
         do { arg_id <- tcLookupId arg_name
-           ; wrap <- tcSubTypeSigma GenSigCtxt
+           ; wrap <- tcSubTypeSigma (OccurrenceOf (idName arg_id))
+                                    GenSigCtxt
                                     (idType arg_id)
                                     (substTy subst arg_ty)
                 -- Why do we need tcSubType here?
@@ -503,8 +504,8 @@ Hence a special-purpose skolemiseTvBndrX here, similar to
 GHC.Tc.Utils.Instantiate.tcInstSkolTyVarsX except that the latter
 does cloning.
 
-[Pattern synonyms and higher rank types]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Note [Pattern synonyms and higher rank types]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Consider
   data T = MkT (forall a. a->a)
 

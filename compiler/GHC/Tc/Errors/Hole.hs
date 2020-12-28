@@ -935,7 +935,7 @@ tcCheckHoleFit (TypedHole {..}) hole_ty ty = discardErrs $
                           -- imp is the innermost implication
                           (imp:_) -> return (ic_tclvl imp)
      ; (wrap, wanted) <- setTcLevel innermost_lvl $ captureConstraints $
-                         tcSubTypeSigma ExprSigCtxt ty hole_ty
+                         tcSubTypeSigma orig ExprSigCtxt ty hole_ty
      ; traceTc "Checking hole fit {" empty
      ; traceTc "wanteds are: " $ ppr wanted
      ; if isEmptyWC wanted && isEmptyBag th_relevant_cts
@@ -961,10 +961,12 @@ tcCheckHoleFit (TypedHole {..}) hole_ty ty = discardErrs $
                ; traceTc "rems was:" $ ppr rem
                ; traceTc "}" empty
                ; return (isSolvedWC rem, wrap) } }
-     where
-       setWCAndBinds :: EvBindsVar         -- Fresh ev binds var.
-                     -> Implication        -- The implication to put WC in.
-                     -> WantedConstraints  -- The WC constraints to put implic.
-                     -> WantedConstraints  -- The new constraints.
-       setWCAndBinds binds imp wc
-         = mkImplicWC $ unitBag $ imp { ic_wanted = wc , ic_binds = binds }
+  where
+    orig = ExprHoleOrigin (hole_occ <$> th_hole)
+
+    setWCAndBinds :: EvBindsVar         -- Fresh ev binds var.
+                  -> Implication        -- The implication to put WC in.
+                  -> WantedConstraints  -- The WC constraints to put implic.
+                  -> WantedConstraints  -- The new constraints.
+    setWCAndBinds binds imp wc
+      = mkImplicWC $ unitBag $ imp { ic_wanted = wc , ic_binds = binds }
