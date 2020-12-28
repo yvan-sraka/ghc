@@ -969,10 +969,11 @@ simplifyInfer rhs_tclvl infer_mode sigs name_taus wanteds
                | otherwise      = approximateWC False wanted_transformed
 
        -- See Note [Simplifying the approximated WC]
-       ; (quant_pred_candidates, simplified_wc) <- case did_fds_combine of
+       ; (quant_pred_candidates, final_residual_wc) <- case did_fds_combine of
            NoCombinationYet _ -> do { traceTc "skipping simplifying the approximated WC"
                                               (ppr quant_ct_candidates)
-                                    ; return (ctsPreds quant_ct_candidates, emptyWC) }
+                                    ; return ( ctsPreds quant_ct_candidates
+                                             , wanted_transformed ) }
            YesFDsCombined
              -> do { traceTc "simplifying approximateWC {" (ppr quant_ct_candidates)
                    ; _ <- promoteTyVarSet (tyCoVarsOfCts quant_ct_candidates)
@@ -983,7 +984,8 @@ simplifyInfer rhs_tclvl infer_mode sigs name_taus wanteds
                                       runTcSWithEvBinds ev_binds_var $
                                       solveSimpleWanteds quant_ct_candidates
                    ; traceTc "simplifying approximateWC }" (ppr simplified_wc)
-                   ; return (ctsPreds (wc_simple simplified_wc), simplified_wc) }
+                   ; return ( ctsPreds (wc_simple simplified_wc)
+                            , residual_wc `andWC` simplified_wc ) }
 
        -- Decide what type variables and constraints to quantify
        -- NB: quant_pred_candidates is already fully zonked
@@ -1009,8 +1011,7 @@ simplifyInfer rhs_tclvl infer_mode sigs name_taus wanteds
        -- Now construct the residual constraint
        ; residual_wanted <- mkResidualConstraints rhs_tclvl ev_binds_var
                                  name_taus co_vars qtvs bound_theta_vars
-                                 (residual_wc `andWC` simplified_wc
-                                  `andWC` mkSimpleWC psig_wanted)
+                                 (final_residual_wc `andWC` mkSimpleWC psig_wanted)
 
          -- All done!
        ; traceTc "} simplifyInfer/produced residual implication for quantification" $
