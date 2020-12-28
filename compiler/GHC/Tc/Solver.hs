@@ -1,4 +1,5 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE MultiWayIf #-}
 
 module GHC.Tc.Solver(
        simplifyInfer, InferMode(..),
@@ -974,6 +975,10 @@ simplifyInfer rhs_tclvl infer_mode sigs name_taus wanteds
                                     ; return (ctsPreds quant_ct_candidates, emptyWC) }
            YesFDsCombined
              -> do { traceTc "simplifying approximateWC {" (ppr quant_ct_candidates)
+                   ; _ <- promoteTyVarSet (tyCoVarsOfCts quant_ct_candidates)
+                     -- this promotion re-establishes WantedInv of
+                     -- Note [TcLevel invariants] in GHC.Tc.Utils.TcType.
+
                    ; simplified_wc <- setTcLevel rhs_tclvl $
                                       runTcSWithEvBinds ev_binds_var $
                                       solveSimpleWanteds quant_ct_candidates
@@ -1436,10 +1441,9 @@ defaultTyVarsAndSimplify rhs_tclvl mono_tvs candidates
                              (dVarSetElems (cand_tvs `minusDVarSet` cand_kvs))
        ; let some_default = or default_kvs || or default_tvs
 
-       ; case () of
-           _ | some_default -> simplify_cand candidates
-             | any_promoted -> mapM TcM.zonkTcType candidates
-             | otherwise    -> return candidates
+       ; if | some_default -> simplify_cand candidates
+            | any_promoted -> mapM TcM.zonkTcType candidates
+            | otherwise    -> return candidates
        }
   where
     default_one poly_kinds is_kind_var tv
