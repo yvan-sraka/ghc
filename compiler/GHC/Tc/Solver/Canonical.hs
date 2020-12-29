@@ -2265,7 +2265,6 @@ canEqCanLHS2 ev eq_rel swapped lhs1 ps_xi1 lhs2 ps_xi2 mco
          mapM_ (unifyDerived (ctEvLoc ev) Nominal) inj_eqns
 
        ; tclvl <- getTcLevel
-       ; dflags <- getDynFlags
        ; let tvs1 = tyCoVarsOfTypes fun_args1
              tvs2 = tyCoVarsOfTypes fun_args2
 
@@ -2276,9 +2275,9 @@ canEqCanLHS2 ev eq_rel swapped lhs1 ps_xi1 lhs2 ps_xi2 mco
 
                -- If we have F a ~ F (F a), we want to swap.
              swap_for_occurs
-               | CTE_OK     <- checkTyFamEq dflags fun_tc2 fun_args2
+               | CTE_OK     <- checkTyFamEq fun_tc2 fun_args2
                                             (mkTyConApp fun_tc1 fun_args1)
-               , CTE_Occurs <- checkTyFamEq dflags fun_tc1 fun_args1
+               , CTE_Occurs <- checkTyFamEq fun_tc1 fun_args1
                                             (mkTyConApp fun_tc2 fun_args2)
                = True
 
@@ -2322,9 +2321,8 @@ canEqTyVarFunEq :: CtEvidence               -- :: lhs ~ (rhs |> mco)
                 -> TcS (StopOrContinue Ct)
 canEqTyVarFunEq ev eq_rel swapped tv1 ps_xi1 fun_tc2 fun_args2 ps_xi2 mco
   = do { can_unify <- unifyTest ev tv1 rhs
-       ; dflags    <- getDynFlags
        ; if | case can_unify of { NoUnify -> False; _ -> True }
-            , CTE_OK <- checkTyVarEq dflags YesTypeFamilies tv1 rhs
+            , CTE_OK <- checkTyVarEq YesTypeFamilies tv1 rhs
             -> canEqCanLHSFinish ev eq_rel swapped (TyVarLHS tv1) rhs
 
             | otherwise
@@ -2426,19 +2424,16 @@ canEqCanLHSFinish ev eq_rel swapped lhs rhs
 -- guaranteed that tyVarKind lhs == typeKind rhs, for (TyEq:K)
 -- (TyEq:N) is checked in can_eq_nc', and (TyEq:TV) is handled in canEqTyVarHomo
 
-  = do { dflags <- getDynFlags
-
+  = do {
           -- this performs the swap if necessary
-       ; new_ev <- rewriteEqEvidence emptyRewriterSet ev swapped
+         new_ev <- rewriteEqEvidence emptyRewriterSet ev swapped
                                      lhs_ty rhs rewrite_co1 rewrite_co2
 
      -- Must do the occurs check even on tyvar/tyvar
      -- equalities, in case have  x ~ (y :: ..x...)
      -- #12593
-     -- guarantees (TyEq:OC), (TyEq:F), and (TyEq:H)
-    -- this next line checks also for coercion holes (TyEq:H); see
-    -- Note [Equalities with incompatible kinds]
-       ; case canEqOK dflags eq_rel lhs rhs of
+     -- guarantees (TyEq:OC) and (TyEq:F)
+       ; case canEqOK eq_rel lhs rhs of
            CanEqOK ->
              do { traceTcS "canEqOK" (ppr lhs $$ ppr rhs)
                 ; continueWith (CEqCan { cc_ev = new_ev, cc_lhs = lhs
@@ -2529,20 +2524,13 @@ instance Outputable CanEqOK where
 --   TyEq:K:  assumed; ASSERTed here (that is, kind(lhs) = kind(rhs))
 --   TyEq:N:  assumed; ASSERTed here (if eq_rel is R, rhs is not a newtype)
 --   TyEq:TV: not checked (this is hard to check)
---   TyEq:H:  Checked here.
-canEqOK :: DynFlags -> EqRel -> CanEqLHS -> Xi -> CanEqOK
-canEqOK dflags eq_rel lhs rhs
+canEqOK :: EqRel -> CanEqLHS -> Xi -> CanEqOK
+canEqOK eq_rel lhs rhs
   = ASSERT( good_rhs )
-    case checkTypeEq dflags YesTypeFamilies lhs rhs of
+    case checkTypeEq YesTypeFamilies lhs rhs of
       CTE_OK  -> CanEqOK
       CTE_Bad -> CanEqNotOK OtherCIS
                  -- Violation of TyEq:F
-
-      CTE_HoleBlocker -> CanEqNotOK (BlockedCIS holes)
-        where holes = coercionHolesOfType rhs
-                 -- This is the case detailed in
-                 -- Note [Equalities with incompatible kinds]
-                 -- Violation of TyEq:H
 
                  -- These are both a violation of TyEq:OC, but we
                  -- want to differentiate for better production of
@@ -2663,6 +2651,9 @@ Wrinkles:
      in the blocking coercion involves no further blocking coercions.
      Alternatively, we could be careful not to do unnecessary swaps during
      canonicalisation, but that seems hard to do, in general.
+
+     "RAE" update the above. We now skip kicking when the new hole mentions
+     others. That should avoid this loop.
 
  (3) Suppose we have [W] (a :: k1) ~ (rhs :: k2). We duly follow the
      algorithm detailed here, producing [W] co :: k2 ~ k1, and adding

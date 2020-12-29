@@ -953,7 +953,6 @@ mkGivenErrorReporter :: Reporter
 -- See Note [Given errors]
 mkGivenErrorReporter ctxt items
   = do { (ctxt, binds_msg, item) <- relevantBindings True ctxt item
-       ; dflags <- getDynFlags
        ; let (implic:_) = cec_encl ctxt
                  -- Always non-empty when mkGivenErrorReporter is called
              item' = item { ei_loc = setCtLocEnv (ei_loc item) (ic_env implic) }
@@ -966,7 +965,7 @@ mkGivenErrorReporter ctxt items
              report = important inaccessible_msg `mappend`
                       mk_relevant_bindings binds_msg
 
-       ; err <- mkEqErr_help dflags ctxt report item' ty1 ty2
+       ; err <- mkEqErr_help ctxt report item' ty1 ty2
 
        ; traceTc "mkGivenErrorReporter" (ppr item)
        ; reportWarning (Reason Opt_WarnInaccessibleCode) err }
@@ -1615,11 +1614,10 @@ mkEqErr1 ctxt item   -- Wanted or derived;
        ; let coercible_msg = case errorItemEqRel item of
                NomEq  -> empty
                ReprEq -> mkCoercibleExplanation rdr_env fam_envs ty1 ty2
-       ; dflags <- getDynFlags
        ; traceTc "mkEqErr1" (ppr item $$ pprCtOrigin (errorItemOrigin item))
        ; let report = mconcat [ important coercible_msg
                               , mk_relevant_bindings binds_msg]
-       ; mkEqErr_help dflags ctxt report item ty1 ty2 }
+       ; mkEqErr_help ctxt report item ty1 ty2 }
   where
     (ty1, ty2) = getEqPredTys (ei_pred item)
 
@@ -1670,14 +1668,14 @@ mkCoercibleExplanation rdr_env fam_envs ty1 ty2
       | otherwise
       = False
 
-mkEqErr_help :: DynFlags -> ReportErrCtxt -> Report
+mkEqErr_help :: ReportErrCtxt -> Report
              -> ErrorItem
              -> TcType -> TcType -> TcM ErrMsg
-mkEqErr_help dflags ctxt report item ty1 ty2
+mkEqErr_help ctxt report item ty1 ty2
   | Just (tv1, _) <- tcGetCastedTyVar_maybe ty1
-  = mkTyVarEqErr dflags ctxt report item tv1 ty2
+  = mkTyVarEqErr ctxt report item tv1 ty2
   | Just (tv2, _) <- tcGetCastedTyVar_maybe ty2
-  = mkTyVarEqErr dflags ctxt report item tv2 ty1
+  = mkTyVarEqErr ctxt report item tv2 ty1
   | otherwise
   = reportEqErr ctxt report item ty1 ty2
 
@@ -1691,14 +1689,14 @@ reportEqErr ctxt report item ty1 ty2
     eqInfo   = mkEqInfoMsg item ty1 ty2
 
 mkTyVarEqErr, mkTyVarEqErr'
-  :: DynFlags -> ReportErrCtxt -> Report -> ErrorItem
-             -> TcTyVar -> TcType -> TcM ErrMsg
+  :: ReportErrCtxt -> Report -> ErrorItem
+  -> TcTyVar -> TcType -> TcM ErrMsg
 -- tv1 and ty2 are already tidied
-mkTyVarEqErr dflags ctxt report item tv1 ty2
+mkTyVarEqErr ctxt report item tv1 ty2
   = do { traceTc "mkTyVarEqErr" (ppr item $$ ppr tv1 $$ ppr ty2)
-       ; mkTyVarEqErr' dflags ctxt report item tv1 ty2 }
+       ; mkTyVarEqErr' ctxt report item tv1 ty2 }
 
-mkTyVarEqErr' dflags ctxt report item tv1 ty2
+mkTyVarEqErr ctxt report item tv1 ty2
   | isSkolemTyVar tv1  -- ty2 won't be a meta-tyvar; we would have
                        -- swapped in Solver.Canonical.canEqTyVarHomo
     || isTyVarTyVar tv1 && not (isTyVarTy ty2)
@@ -1743,7 +1741,7 @@ mkTyVarEqErr' dflags ctxt report item tv1 ty2
 
     -- This is wrinkle (4) in Note [Equalities with incompatible kinds] in
     -- GHC.Tc.Solver.Canonical
-  | CTE_HoleBlocker <- occ_check_expand
+  | hasCoercionHoleTy ty2
   = mkBlockedEqErr ctxt item
 
   -- If the immediately-enclosing implication has 'tv' a skolem, and
@@ -1814,7 +1812,7 @@ mkTyVarEqErr' dflags ctxt report item tv1 ty2
     headline_msg = misMatchOrCND insoluble_occurs_check ctxt item ty1 ty2
 
     ty1 = mkTyVarTy tv1
-    occ_check_expand       = occCheckForErrors dflags tv1 ty2
+    occ_check_expand       = occCheckForErrors tv1 ty2
     insoluble_occurs_check = isInsolubleOccursCheck (errorItemEqRel item) tv1 ty2
 
     what = text $ levelString $

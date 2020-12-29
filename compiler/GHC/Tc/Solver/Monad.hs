@@ -2002,8 +2002,16 @@ kickOutAfterUnification new_tv
        ; return n_kicked }
 
 -- See Wrinkle (2) in Note [Equalities with incompatible kinds] in GHC.Tc.Solver.Canonical
+-- It's possible that this could just go ahead and unify, but could there be occurs-check
+-- problems? Seems simpler just to kick out.
 kickOutAfterFillingCoercionHole :: CoercionHole -> Coercion -> TcS ()
-kickOutAfterFillingCoercionHole hole filled_co
+kickOutAfterFillingCoercionHole hole filling_co
+  | hasCoercionHoleCo filling_co
+  = return ()
+    -- still more unsolved wanteds; no need for any action
+    -- Not just an optimisation: See Wrinkle (2) in the Note.
+
+  | otherwise
   = do { ics <- getInertCans
        ; let (kicked_out, ics') = kick_out ics
              n_kicked           = workListSize kicked_out
@@ -2018,30 +2026,22 @@ kickOutAfterFillingCoercionHole hole filled_co
 
        ; setInertCans ics' }
   where
-    holes_of_co = coercionHolesOfCo filled_co
-
     kick_out :: InertCans -> (WorkList, InertCans)
-    kick_out ics@(IC { inert_irreds = irreds })
-      = let (to_kick, to_keep) = partitionBagWith kick_ct irreds
+    kick_out ics@(IC { inert_eqs = eqs })
+      = let (to_kick, to_keep) = partitionBag kick_ct eqs
 
             kicked_out = extendWorkListCts (bagToList to_kick) emptyWorkList
-            ics'       = ics { inert_irreds = to_keep }
+            ics'       = ics { inert_eqs = to_keep }
         in
         (kicked_out, ics')
 
-    kick_ct :: Ct -> Either Ct Ct
-         -- Left: kick out; Right: keep. But even if we keep, we may need
-         -- to update the set of blocking holes
-    kick_ct ct@(CIrredCan { cc_status = BlockedCIS holes })
-      | hole `elementOfUniqSet` holes
-      = let new_holes = holes `delOneFromUniqSet` hole
-                              `unionUniqSets` holes_of_co
-            updated_ct = ct { cc_status = BlockedCIS new_holes }
-        in
-        if isEmptyUniqSet new_holes
-        then Left updated_ct
-        else Right updated_ct
-    kick_ct other = Right other
+    kick_ct :: Ct -> Bool
+         -- True: kick out; False: keep.
+    kick_ct ct@(CEqCan { cc_lhs = TyVarLHS tv, cc_rhs = rhs, cc_ev = ctev })
+      = isWanted ctev &&    -- optimisation: givens don't have coercion holes anyway
+        isMetaTyVar tv &&   -- this is all about unification; skip if that's not possible
+        rhs `hasThisCoercionHoleTy` hole
+    kick_ct other = pprPanic "kick_ct (coercion hole)" (ppr other)
 
 {- Note [kickOutRewritable]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
