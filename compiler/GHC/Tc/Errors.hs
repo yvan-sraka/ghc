@@ -1201,9 +1201,12 @@ tryReporter ctxt (str, keep_me,  suppress_after, reporter) items
 pprArising :: CtOrigin -> SDoc
 -- Used for the main, top-level error message
 -- We've done special processing for TypeEq, KindEq, Given
-pprArising (TypeEqOrigin {}) = empty
-pprArising (KindEqOrigin {}) = empty
-pprArising (GivenOrigin {})  = empty
+pprArising (TypeEqOrigin {})         = empty
+pprArising (KindEqOrigin {})         = empty
+pprArising (GivenOrigin {})          = empty
+pprArising (AmbiguityCheckOrigin {}) = empty  -- the "In the ambiguity check" context
+                                              -- is sufficient; this would just be
+                                              -- repetitive
 pprArising orig              = pprCtOrigin orig
 
 -- Add the "arising from..." part to a message about bunch of dicts
