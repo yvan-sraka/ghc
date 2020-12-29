@@ -454,9 +454,6 @@ data CtOrigin
       Name   -- the method name
       Type   -- the instance-sig type
       Type   -- the instantiated type of the method
-  | ImpedanceMatchOrigin
-      -- This is used in the check in Note [Impedance matching] in GHC.Tc.Gen.Bind.
-      -- It should probably become Shouldn'tHappenOrigin, pending on #19131.
   | AmbiguityCheckOrigin UserTypeCtxt
 
 -- An origin is visible if the place where the constraint arises is manifest
@@ -690,5 +687,4 @@ pprCtO StaticOrigin          = text "a static form"
 pprCtO NonLinearPatternOrigin = text "a non-linear pattern"
 pprCtO (UsageEnvironmentOf x) = hsep [text "multiplicity of", quotes (ppr x)]
 pprCtO BracketOrigin         = text "a quotation bracket"
-pprCtO ImpedanceMatchOrigin  = text "a check that an inferred signature is polymorphic enough"
 pprCtO _                     = panic "pprCtOrigin"
