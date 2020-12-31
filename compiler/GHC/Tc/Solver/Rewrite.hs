@@ -35,7 +35,7 @@ import GHC.Utils.Misc
 import GHC.Data.Maybe
 import Control.Monad
 import GHC.Utils.Monad ( zipWith3M )
-import Data.List.NonEmpty ( NonEmpty(..) )
+import Data.List ( find )
 
 import Control.Arrow ( first )
 
@@ -829,16 +829,14 @@ rewrite_exact_fam_app tc tys
              homogenise xi co = homogenise_result xi (co `mkTcTransCo` args_co) role kind_co
 
          -- STEP 4: try the inerts
-       ; result2 <- liftTcS $ lookupFamAppInert tc xis
        ; flavour <- getFlavour
+       ; result2 <- liftTcS $ lookupFamAppInert (`eqCanRewriteFR` (flavour, eq_rel)) tc xis
        ; case result2 of
-         { Just (co, xi, fr@(inert_flavour, inert_eq_rel))
+         { Just (co, xi, (inert_flavour, inert_eq_rel))
              -- co :: F xis ~ir xi
-
-             | fr `eqCanRewriteFR` (flavour, eq_rel) ->
-                 do { traceRewriteM "rewrite family application with inert"
+             -> do { traceRewriteM "rewrite family application with inert"
                                 (ppr tc <+> ppr xis $$ ppr xi)
-                    ; finish (inert_flavour == Given) (homogenise xi downgraded_co) }
+                   ; finish (inert_flavour == Given) (homogenise xi downgraded_co) }
                -- this will sometimes duplicate an inert in the cache,
                -- but avoiding doing so had no impact on performance, and
                -- it seems easier not to weed out that special case
@@ -967,13 +965,11 @@ rewrite_tyvar2 :: TcTyVar -> CtFlavourRole -> RewriteM RewriteTvResult
 rewrite_tyvar2 tv fr@(_, eq_rel)
   = do { ieqs <- liftTcS $ getInertEqs
        ; case lookupDVarEnv ieqs tv of
-           Just (EqualCtList (ct :| _))   -- If the first doesn't work,
-                                          -- the subsequent ones won't either
-             | CEqCan { cc_ev = ctev, cc_lhs = TyVarLHS tv
+           Just equal_ct_list
+             | Just ct <- find can_rewrite equal_ct_list
+             , CEqCan { cc_ev = ctev, cc_lhs = TyVarLHS tv
                       , cc_rhs = rhs_ty, cc_eq_rel = ct_eq_rel } <- ct
-             , let ct_fr = (ctEvFlavour ctev, ct_eq_rel)
-             , ct_fr `eqCanRewriteFR` fr  -- This is THE key call of eqCanRewriteFR
-             -> do { let wrw = ct_fr `wantedRewriteWanted` fr
+             -> do { let wrw = ctFlavourRole ct `wantedRewriteWanted` fr
                    ; traceRewriteM "Following inert tyvar" $
                         vcat [ ppr tv <+> equals <+> ppr rhs_ty
                              , ppr ctev
@@ -995,6 +991,11 @@ rewrite_tyvar2 tv fr@(_, eq_rel)
                     -- so ctEvCoercion is fine.
 
            _other -> return RTRNotFollowed }
+
+  where
+    can_rewrite :: Ct -> Bool
+    can_rewrite ct = ctFlavourRole ct `eqCanRewriteFR` fr
+      -- This is THE key call of eqCanRewriteFR
 
 {-
 Note [An alternative story for the inert substitution]

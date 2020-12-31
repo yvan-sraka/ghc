@@ -1696,7 +1696,7 @@ mkTyVarEqErr ctxt report item tv1 ty2
   = do { traceTc "mkTyVarEqErr" (ppr item $$ ppr tv1 $$ ppr ty2)
        ; mkTyVarEqErr' ctxt report item tv1 ty2 }
 
-mkTyVarEqErr ctxt report item tv1 ty2
+mkTyVarEqErr' ctxt report item tv1 ty2
   | isSkolemTyVar tv1  -- ty2 won't be a meta-tyvar; we would have
                        -- swapped in Solver.Canonical.canEqTyVarHomo
     || isTyVarTyVar tv1 && not (isTyVarTy ty2)

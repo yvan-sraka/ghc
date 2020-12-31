@@ -57,7 +57,6 @@ import GHC.Types.Unique( hasKey )
 import GHC.Driver.Session
 import GHC.Utils.Misc
 import qualified GHC.LanguageExtensions as LangExt
-import Data.List.NonEmpty ( NonEmpty(..) )
 
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Maybe
@@ -1265,8 +1264,8 @@ improveLocalFunEqs work_ev inerts fam_tc args rhs
        ; emitFunDepDeriveds (ctEvRewriters work_ev) improvement_eqns }
   where
     funeqs        = inert_funeqs inerts
-    funeqs_for_tc = [ funeq_ct | EqualCtList (funeq_ct :| _)
-                                   <- findFunEqsByTyCon funeqs fam_tc
+    funeqs_for_tc = [ funeq_ct | equal_ct_list <- findFunEqsByTyCon funeqs fam_tc
+                               , funeq_ct <- equal_ct_list
                                , NomEq == ctEqRel funeq_ct ]
                                   -- representational equalities don't interact
                                   -- with type family dependencies
