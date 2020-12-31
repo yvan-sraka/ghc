@@ -1,5 +1,5 @@
 {-# LANGUAGE CPP, DeriveFunctor, TypeFamilies, ScopedTypeVariables, TypeApplications,
-             DerivingStrategies, GeneralizedNewtypeDeriving #-}
+             DerivingStrategies, GeneralizedNewtypeDeriving, RankNTypes #-}
 
 {-# OPTIONS_GHC -Wno-incomplete-record-updates -Wno-incomplete-uni-patterns #-}
 
@@ -714,23 +714,52 @@ data InertCans   -- See Note [Detailed InertCans Invariants] for more
 
 type InertEqs    = DTyVarEnv EqualCtList
 
-partitionInertEqs :: (Ct -> Bool)   -- Ct will always be a CEqCan with a TyVarLHS
-                  -> InertEqs
-                  -> ([Ct], InertEqs)
-partitionInertEqs pred orig_inerts = foldDVarEnv folder ([], emptyDVarEnv) orig_inerts
+{-# INLINE partition_eqs_container #-}
+partition_eqs_container
+  :: forall container
+   . container    -- empty container
+  -> (forall b. (EqualCtList -> b -> b) -> b -> container -> b) -- folder
+  -> (container -> CanEqLHS -> EqualCtList -> container)  -- extender
+  -> (Ct -> Bool)
+  -> container
+  -> ([Ct], container)
+partition_eqs_container empty_container fold_container extend_container pred orig_inerts
+  = fold_container folder ([], empty_container) orig_inerts
   where
-    folder :: EqualCtList -> ([Ct], InertEqs) -> ([Ct], InertEqs)
+    folder :: EqualCtList -> ([Ct], container) -> ([Ct], container)
     folder eqs (acc_true, acc_false)
       = (eqs_true ++ acc_true, acc_false')
       where
         (eqs_true, eqs_false) = partition pred eqs
 
         acc_false'
-          | CEqCan { cc_lhs = TyVarLHS tv } : _ <- eqs_false
-          = extendDVarEnv acc_false tv eqs_false
+          | CEqCan { cc_lhs = lhs } : _ <- eqs_false
+          = extend_container acc_false lhs eqs_false
           | otherwise
           = acc_false
 
+partitionInertEqs :: (Ct -> Bool)   -- Ct will always be a CEqCan with a TyVarLHS
+                  -> InertEqs
+                  -> ([Ct], InertEqs)
+partitionInertEqs = partition_eqs_container emptyDVarEnv foldDVarEnv extendInertEqs
+
+partitionFunEqs :: (Ct -> Bool)    -- Ct will always be a CEqCan with a TyFamLHS
+                -> FunEqMap EqualCtList
+                -> ([Ct], FunEqMap EqualCtList)
+partitionFunEqs
+  = partition_eqs_container emptyFunEqs (\ f z eqs -> foldFunEqs f eqs z) extendFunEqs
+
+-- precondition: CanEqLHS is a TyVarLHS
+extendInertEqs :: InertEqs -> CanEqLHS -> EqualCtList -> InertEqs
+extendInertEqs eqs (TyVarLHS tv) new_eqs = extendDVarEnv eqs tv new_eqs
+extendInertEqs _ other _ = pprPanic "extendInertEqs" (ppr other)
+
+-- precondition: CanEqLHS is a TyFamLHS
+extendFunEqs :: FunEqMap EqualCtList -> CanEqLHS -> EqualCtList -> FunEqMap EqualCtList
+extendFunEqs eqs (TyFamLHS tf args) new_eqs = insertTcApp eqs tf args new_eqs
+extendFunEqs _ other _ = pprPanic "extendFunEqs" (ppr other)
+
+-----------------
 type EqualCtList = [Ct]
   -- See Note [EqualCtList invariants]
 
@@ -1860,12 +1889,10 @@ kick_out_rewritable new_fr new_lhs
                           ((dicts_out `andCts` irs_out)
                             `extendCtsList` insts_out)
 
-    (tv_eqs_out, tv_eqs_in) = foldDVarEnv (kick_out_eqs extend_tv_eqs)
-                                          ([], emptyDVarEnv) tv_eqs
-    (feqs_out,   feqs_in)   = foldFunEqs  (kick_out_eqs extend_fun_eqs)
-                                          funeqmap ([], emptyFunEqs)
-    (dicts_out,  dicts_in)  = partitionDicts   kick_out_ct dictmap
-    (irs_out,    irs_in)    = partitionBag     kick_out_ct irreds
+    (tv_eqs_out, tv_eqs_in) = partitionInertEqs kick_out_eq tv_eqs
+    (feqs_out,   feqs_in)   = partitionFunEqs   kick_out_eq funeqmap
+    (dicts_out,  dicts_in)  = partitionDicts    kick_out_ct dictmap
+    (irs_out,    irs_in)    = partitionBag      kick_out_ct irreds
       -- Kick out even insolubles: See Note [Rewrite insolubles]
       -- Of course we must kick out irreducibles like (c a), in case
       -- we can rewrite 'c' to something more useful
@@ -1930,27 +1957,8 @@ kick_out_rewritable new_fr new_lhs
                   fr_may_rewrite fs
                && fr_tf_can_rewrite_ty new_tf new_tf_args role (ctPred ct)
 
-    extend_tv_eqs :: InertEqs -> CanEqLHS -> EqualCtList -> InertEqs
-    extend_tv_eqs eqs (TyVarLHS tv) cts = extendDVarEnv eqs tv cts
-    extend_tv_eqs eqs other _cts = pprPanic "extend_tv_eqs" (ppr eqs $$ ppr other)
-
-    extend_fun_eqs :: FunEqMap EqualCtList -> CanEqLHS -> EqualCtList
-                   -> FunEqMap EqualCtList
-    extend_fun_eqs eqs (TyFamLHS fam_tc fam_args) cts
-      = insertTcApp eqs fam_tc fam_args cts
-    extend_fun_eqs eqs other _cts = pprPanic "extend_fun_eqs" (ppr eqs $$ ppr other)
-
-    kick_out_eqs :: (container -> CanEqLHS -> EqualCtList -> container)
-                 -> EqualCtList -> ([Ct], container)
-                 -> ([Ct], container)
-    kick_out_eqs extend eqs (acc_out, acc_in)
-      = (eqs_out `chkAppend` acc_out, case eqs_in of
-            []        -> acc_in
-            (eq1 : _) -> extend acc_in (cc_lhs eq1) eqs_in)
-      where
-        (eqs_out, eqs_in) = partition kick_out_eq eqs
-
     -- Implements criteria K1-K3 in Note [Extending the inert equalities]
+    kick_out_eq :: Ct -> Bool
     kick_out_eq (CEqCan { cc_lhs = lhs, cc_rhs = rhs_ty
                         , cc_ev = ev, cc_eq_rel = eq_rel })
       | not (fr_may_rewrite fs)
@@ -1978,7 +1986,7 @@ kick_out_rewritable new_fr new_lhs
               NomEq  -> rhs_ty `eqType` canEqLHSType new_lhs -- (K3a)
               ReprEq -> is_can_eq_lhs_head new_lhs rhs_ty    -- (K3b)
 
-    kick_out_eq ct = pprPanic "keep_eq" (ppr ct)
+    kick_out_eq ct = pprPanic "kick_out_eq" (ppr ct)
 
     is_can_eq_lhs_head (TyVarLHS tv) = go
       where
@@ -2015,14 +2023,8 @@ kickOutAfterUnification new_tv
 -- See Wrinkle (2) in Note [Equalities with incompatible kinds] in GHC.Tc.Solver.Canonical
 -- It's possible that this could just go ahead and unify, but could there be occurs-check
 -- problems? Seems simpler just to kick out.
-kickOutAfterFillingCoercionHole :: CoercionHole -> Coercion -> TcS ()
-kickOutAfterFillingCoercionHole hole filling_co
-  | hasCoercionHoleCo filling_co
-  = return ()
-    -- still more unsolved wanteds; no need for any action
-    -- Not just an optimisation: See Wrinkle (2) in the Note.
-
-  | otherwise
+kickOutAfterFillingCoercionHole :: CoercionHole -> TcS ()
+kickOutAfterFillingCoercionHole hole
   = do { ics <- getInertCans
        ; let (kicked_out, ics') = kick_out ics
              n_kicked           = workListSize kicked_out
@@ -2038,16 +2040,17 @@ kickOutAfterFillingCoercionHole hole filling_co
        ; setInertCans ics' }
   where
     kick_out :: InertCans -> (WorkList, InertCans)
-    kick_out ics@(IC { inert_eqs = eqs }) = (kicked_out, ics { inert_eqs = to_keep })
+    kick_out ics@(IC { inert_eqs = eqs, inert_funeqs = funeqs })
+      = (kicked_out, ics { inert_eqs = eqs_to_keep, inert_funeqs = funeqs_to_keep })
       where
-        (to_kick, to_keep) = partitionInertEqs kick_ct eqs
-        kicked_out = extendWorkListCts to_kick emptyWorkList
+        (eqs_to_kick, eqs_to_keep)       = partitionInertEqs kick_ct eqs
+        (funeqs_to_kick, funeqs_to_keep) = partitionFunEqs kick_ct funeqs
+        kicked_out = extendWorkListCts (eqs_to_kick ++ funeqs_to_kick) emptyWorkList
 
     kick_ct :: Ct -> Bool
          -- True: kick out; False: keep.
-    kick_ct (CEqCan { cc_lhs = TyVarLHS tv, cc_rhs = rhs, cc_ev = ctev })
+    kick_ct (CEqCan { cc_rhs = rhs, cc_ev = ctev })
       = isWanted ctev &&    -- optimisation: givens don't have coercion holes anyway
-        isMetaTyVar tv &&   -- this is all about unification; skip if that's not possible
         rhs `hasThisCoercionHoleTy` hole
     kick_ct other = pprPanic "kick_ct (coercion hole)" (ppr other)
 
@@ -3586,7 +3589,7 @@ Yuk!
 fillCoercionHole :: CoercionHole -> Coercion -> TcS ()
 fillCoercionHole hole co
   = do { wrapTcS $ TcM.fillCoercionHole hole co
-       ; kickOutAfterFillingCoercionHole hole co }
+       ; kickOutAfterFillingCoercionHole hole }
 
 setEvBindIfWanted :: CtEvidence -> EvTerm -> TcS ()
 setEvBindIfWanted ev tm

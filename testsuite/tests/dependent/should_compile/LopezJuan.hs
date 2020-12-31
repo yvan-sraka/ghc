@@ -15,6 +15,7 @@ type unification.
 {-# LANGUAGE TypeOperators, TypeApplications, DataKinds,
              StandaloneKindSignatures, PolyKinds, GADTs,
              TypeFamilies, NamedWildCards, PartialTypeSignatures #-}
+{-# OPTIONS_GHC -Wno-partial-type-signatures #-}
 
 module LopezJuan where
 
