@@ -966,6 +966,39 @@ Passing along the solved_dicts important for two reasons:
   and to solve G2 we may need H. If we don't spot this sharing we may
   solve H twice; and if this pattern repeats we may get exponentially bad
   behaviour.
+
+Note [No Given/Given fundeps]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+We do not create constraints from Given/Given interactions via functional
+dependencies or type family injectivity annotations. (In this Note, both
+are called fundeps.) Firstly, these fundep constraints will never serve
+a purpose in accepting more programs: Given constraints do not contain
+metavariables that could be unified via exploring fundeps. They *could*
+be useful in discovering inaccessible code. However, the constraints will
+be Wanteds, and as such will stop compilation if they go unsolved. Maybe
+there is a clever way to get the right inaccessible code warnings, but the
+path forward is far from clear. #12466 has further commentary.
+
+We consider Given/instance fundep interactions the same as Given/Given
+interactions: these, too, are not explored.
+
+Furthermore, here is a case where a Given/instance interaction is actively
+harmful (from dependent/should_compile/RaeJobTalk):
+
+  type family a == b :: Bool
+  type family Not a = r | r -> a where
+    Not False = True
+    Not True  = False
+
+  [G] Not (a == b) ~ True
+
+Reacting this Given with the equations for Not produces
+
+  [W] a == b ~ False
+
+which cannot be proved without evidence for the Given. In effect, because
+fundeps do not carry evidence, extracting them from Givens just doesn't make
+sense.
 -}
 
 interactDict :: InertCans -> Ct -> TcS (StopOrContinue Ct)
@@ -1128,9 +1161,7 @@ addFunDepWork inerts work_ev cls
              emitFunDepDeriveds (ctEvRewriters work_ev) $
              improveFromAnother (derived_loc, inert_rewriters) inert_pred work_pred
                -- We don't really rewrite tys2, see below _rewritten_tys2, so that's ok
-               -- Do not create FDs from Given/Given interactions; these are inaccessible
-               -- code, and it is tricky to accurately figure out whether we should error;
-               -- See #12466 and typecheck/should_fail/FDsFromGivens.hs
+               -- Do not create FDs from Given/Given interactions: See Note [No Given/Given fundeps]
         }
       | otherwise
       = return ()
@@ -1298,6 +1329,7 @@ improveLocalFunEqs work_ev inerts fam_tc args rhs
     do_one_injective inj_args rhs (CEqCan { cc_lhs = TyFamLHS _ inert_args
                                           , cc_rhs = irhs, cc_ev = inert_ev })
       | isImprovable inert_ev
+      , not (isGiven inert_ev && isGiven work_ev) -- See Note [No Given/Given fundeps]
       , rhs `tcEqType` irhs
       = mk_fd_eqns inert_ev $ [ Pair arg iarg
                               | (arg, iarg, True) <- zip3 args inert_args inj_args ]
@@ -1801,7 +1833,8 @@ doTopReactEq work_item = doTopReactOther work_item
 improveTopFunEqs :: CtEvidence -> TyCon -> [TcType] -> TcType -> TcS ()
 -- See Note [FunDep and implicit parameter reactions]
 improveTopFunEqs ev fam_tc args rhs
-  | not (isImprovable ev)
+  |  not (isImprovable ev)
+  || isGiven ev  -- See Note [No Given/Given fundeps]
   = return ()
 
   | otherwise
@@ -1946,7 +1979,7 @@ doTopReactDict inerts work_item@(CDictCan { cc_ev = ev, cc_class = cls
                                           , cc_tyargs = xis })
   | isGiven ev   -- Never use instances for Given constraints
   = continueWith work_item
-     -- NB: No fundeps from Givens. They have no evidence.
+     -- See Note [No Given/Given fundeps]
 
   | Just solved_ev <- lookupSolvedDict inerts dict_loc cls xis   -- Cached
   = do { setEvBindIfWanted ev (ctEvTerm solved_ev)
