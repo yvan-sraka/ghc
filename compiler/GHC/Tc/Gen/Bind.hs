@@ -722,11 +722,17 @@ tcPolyInfer rec_tc prag_fn tc_sig_fn mono bind_list
        ; traceTc "simplifyInfer call" (ppr tclvl $$ ppr name_taus $$ ppr wanted)
        ; (qtvs, givens, ev_binds, residual, insoluble)
                  <- simplifyInfer tclvl infer_mode sigs name_taus wanted
-       ; emitConstraints residual
 
        ; let inferred_theta = map evVarPred givens
        ; exports <- checkNoErrs $
                     mapM (mkExport prag_fn residual insoluble qtvs inferred_theta) mono_infos
+
+         -- NB: *after* the checkNoErrs call above. This ensures that we don't get an error
+         -- cascade in case mkExport runs into trouble. In particular, this avoids duplicate
+         -- errors when a partial type signature cannot be quantified in chooseInferredQuantifiers.
+         -- See Note [Quantification and partial signatures] in GHC.Tc.Solver, Wrinkle 4.
+         -- Tested in partial-sigs/should_fail/NamedWilcardExplicitForall.
+       ; emitConstraints residual
 
        ; loc <- getSrcSpanM
        ; let poly_ids = map abe_poly exports

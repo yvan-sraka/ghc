@@ -1451,7 +1451,8 @@ uUnfilledVar2 origin t_or_k swapped tv1 ty2
                      ; return (mkTcNomReflCo ty2) }
 
              else defer } -- This cannot be solved now.  See GHC.Tc.Solver.Canonical
-                          -- Note [Equalities with incompatible kinds]
+                          -- Note [Equalities with incompatible kinds] for how
+                          -- this will be dealt with in the solver
 
       | otherwise
       = do { traceTc "uUnfilledVar2 not ok" (ppr tv1 $$ ppr ty2)
@@ -1587,6 +1588,9 @@ There are four reasons not to unify:
    and so we could not use the tracking mechansim in
    Note [Wanteds rewrite Wanteds] in GHC.Tc.Types.Constraint.
    We thus simply do not unify in this case.
+
+   This is expanded as Wrinkle (2) in Note [Equalities with incompatible kinds]
+   in GHC.Tc.Solver.Canonical.
 
 Needless to say, all there are wrinkles:
 

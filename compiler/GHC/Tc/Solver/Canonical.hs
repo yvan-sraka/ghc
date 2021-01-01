@@ -2135,11 +2135,12 @@ canEqCanLHSHetero ev eq_rel swapped lhs1 ps_xi1 ki1 xi2 ps_xi2 ki2
 
              lhs_co = mkTcReflCo role xi1
 
+             -- See Note [Equalities with incompatible kinds], Wrinkle (1)
+             -- This will be ignored in rewriteEqEvidence if the work item is a Given
              rewriters = rewriterSetFromCo kind_co
 
        ; traceTcS "Hetero equality gives rise to kind equality"
            (ppr kind_co <+> dcolon <+> sep [ ppr ki2, text "~#", ppr ki1 ])
-             -- See Note [Equalities with incompatible kinds]
        ; type_ev <- rewriteEqEvidence rewriters ev swapped xi1 rhs' lhs_co rhs_co
 
           -- rewriteEqEvidence carries out the swap, so we're NotSwapped any more
@@ -2579,80 +2580,34 @@ k2 and use this to cast. To wit, from
 
   [X] (tv :: k1) ~ (rhs :: k2)
 
-(where [X] is [G], [W], or [D]), we go to
+(where [X] is [G] or [W]), we go to
 
-  [noDerived X] co :: k2 ~ k1
-  [X]           (tv :: k1) ~ ((rhs |> co) :: k1)
-
-where
-
-  noDerived G = G
-  noDerived _ = W
-
-For reasons described in Wrinkle (2) below, we want the [X] constraint to be "blocked";
-that is, it should be put aside, and not used to rewrite any other constraint,
-until the kind-equality on which it depends (namely 'co' above) is solved.
-To achieve this
-* The [X] constraint is a CIrredCan
-* With a cc_status of BlockedCIS bchs
-* Where 'bchs' is the set of "blocking coercion holes".  The blocking coercion
-  holes are the free coercion holes of [X]'s type
-* When all the blocking coercion holes in the CIrredCan are filled (solved),
-  we convert [X] to a CNonCanonical and put it in the work list.
-All this is described in more detail in Wrinkle (2).
+  [X] co :: k2 ~ k1
+  [X] (tv :: k1) ~ ((rhs |> co) :: k1)
 
 Wrinkles:
 
- (1) The noDerived step is because Derived equalities have no evidence.
-     And yet we absolutely need evidence to be able to proceed here.
-     Given evidence will use the KindCo coercion; Wanted evidence will
-     be a coercion hole. Even a Derived hetero equality begets a Wanted
-     kind equality.
+ (1) When X is W, the new type-level wanted is effectively rewritten by the
+     kind-level one. We thus include the kind-level wanted in the RewriterSet
+     for the type-level one. See Note [Wanteds rewrite Wanteds] in GHC.Tc.Types.Constraint.
+     This is done in canEqCanLHSHetero.
 
- (2) Though it would be sound to do so, we must not mark the rewritten Wanted
-       [W] (tv :: k1) ~ ((rhs |> co) :: k1)
-     as canonical in the inert set. In particular, we must not unify tv.
-     If we did, the Wanted becomes a Given (effectively), and then can
-     rewrite other Wanteds. But that's bad: See Note [Wanteds do not rewrite Wanteds]
-     in GHC.Tc.Types.Constraint. The problem is about poor error messages. See #11198 for
-     tales of destruction.
+ (2) If we have [W] w :: alpha ~ (rhs |> co_hole), should we unify alpha? No.
+     The problem is that the wanted w is effectively rewritten by another wanted,
+     and unifying alpha effectively promotes this wanted to a given. Doing so
+     means we lose track of the rewriter set associated with the wanted.
 
-     So, we have an invariant on CEqCan (TyEq:H) that the RHS does not have
-     any coercion holes. This is checked in checkTypeEq. Any equalities that
-     have such an RHS are turned into CIrredCans with a BlockedCIS status. We also
-     must be sure to kick out any such CIrredCan constraints that mention coercion holes
-     when those holes get filled in, so that the unification step can now proceed.
+     On the other hand, w is perfectly suitable for rewriting, because of the
+     way we carefully track rewriter sets.
 
-     The kicking out is done in kickOutAfterFillingCoercionHole.
+     We thus allow w to be a CEqCan, but we prevent unification. See
+     Note [Unification preconditions] in GHC.Tc.Utils.Unify.
 
-     However, we must be careful: we kick out only when no coercion holes are
-     left. The holes in the type are stored in the BlockedCIS CtIrredStatus.
-     The extra check that there are no more remaining holes avoids
-     needless work when rewriting evidence (which fills coercion holes) and
-     aids efficiency.
-
-     Moreover, kicking out when there are remaining unfilled holes can
-     cause a loop in the solver in this case:
-          [W] w1 :: (ty1 :: F a) ~ (ty2 :: s)
-     After canonicalisation, we discover that this equality is heterogeneous.
-     So we emit
-          [W] co_abc :: F a ~ s
-     and preserve the original as
-          [W] w2 :: (ty1 |> co_abc) ~ ty2    (blocked on co_abc)
-     Then, co_abc comes becomes the work item. It gets swapped in
-     canEqCanLHS2 and then back again in canEqTyVarFunEq. We thus get
-     co_abc := sym co_abd, and then co_abd := sym co_abe, with
-          [W] co_abe :: F a ~ s
-     This process has filled in co_abc. Suppose w2 were kicked out.
-     When it gets processed,
-     would get this whole chain going again. The solution is to
-     kick out a blocked constraint only when the result of filling
-     in the blocking coercion involves no further blocking coercions.
-     Alternatively, we could be careful not to do unnecessary swaps during
-     canonicalisation, but that seems hard to do, in general.
-
-     "RAE" update the above. We now skip kicking when the new hole mentions
-     others. That should avoid this loop.
+     The only tricky part is that we must later indeed unify if/when the kind-level
+     wanted gets solved. This is done in kickOutAfterFillingCoercionHole,
+     which kicks out all equalities whose RHS mentions the filled-in coercion hole.
+     Note that it looks for type family equalities, too, because of the use of
+     unifyTest in canEqTyVarFunEq.
 
  (3) Suppose we have [W] (a :: k1) ~ (rhs :: k2). We duly follow the
      algorithm detailed here, producing [W] co :: k2 ~ k1, and adding
@@ -2672,12 +2627,12 @@ Wrinkles:
      cast appears opposite a tyvar. This is implemented in the cast case
      of can_eq_nc'.
 
- (4) Reporting an error for a constraint that is blocked with status BlockedCIS
-     is hard: what would we say to users? And we don't
-     really need to report, because if a constraint is blocked, then
-     there is unsolved wanted blocking it; that unsolved wanted will
-     be reported. We thus push such errors to the bottom of the queue
-     in the error-reporting code; they should never be printed.
+ (4) Reporting an error for a constraint that does not unify (Wrinkle (2))
+     only because of a coercion hole is hard: what would we say to users? And
+     we don't really need to report, because if a constraint is blocked, then
+     there is unsolved wanted blocking it; that unsolved wanted will be
+     reported. We thus push such errors to the bottom of the queue in the
+     error-reporting code; they should never be printed.
 
      (4a) We don't want to suppress *all* errors with blocking coercion holes,
           because this filters out e.g. instance-lookup failures (which are
@@ -2688,20 +2643,6 @@ Wrinkles:
      (4b) The error message might be printed with -fdefer-type-errors,
           so it still must exist. This is the only reason why there is
           a message at all. Otherwise, we could simply do nothing.
-
-     (4c) Because the logic in reportWanteds works over predicates as they
-          appeared before rewriting (see Note [Wanteds rewrite Wanteds]
-          in GHC.Tc.Types.Constraint), the blocking coercion hole might
-          not be apparent. For example, suppose we have
-            [W] (alpha[tau:1] :: k) ~ (Int :: Type)
-          and we are solving at level 1. (That is, alpha is touchable.)
-          The logic in this Note means we will produce
-            [W] co :: k ~ Type
-          and rewrite our original Wanted to be
-            [W] alpha[tau:1] ~ (Int |> sym co)
-          Yet, in reporting, we'll go back to the original wanted, with
-          no coercion hole in sight. So we detect this case explicitly.
-          See is_non_blocked_equality in reportWanteds.
 
 Historical note:
 
