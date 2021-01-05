@@ -15,14 +15,14 @@ module GHC.Event.IntTable
     ) where
 
 import Data.Bits ((.&.), shiftL, shiftR)
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.IORef (IORef, newIORef, readIORef, writeIORef, modifyIORef')
 import Data.Maybe (Maybe(..), isJust)
 import Foreign.ForeignPtr (ForeignPtr, mallocForeignPtr, withForeignPtr)
 import Foreign.Storable (peek, poke)
 import GHC.Base (Monad(..), (=<<), ($), ($!), const, liftM, otherwise, when)
 import GHC.Classes (Eq(..), Ord(..))
 import GHC.Event.Arr (Arr)
-import GHC.Num (Num(..))
+import GHC.Num (Num(..), subtract)
 import GHC.Prim (seq)
 import GHC.Types (Bool(..), IO(..), Int(..))
 import qualified GHC.Event.Arr as Arr
@@ -35,7 +35,7 @@ newtype IntTable a = IntTable (IORef (IT a))
 
 data IT a = IT {
       tabArr  :: {-# UNPACK #-} !(Arr (Bucket a))
-    , tabSize :: {-# UNPACK #-} !(ForeignPtr Int)
+    , tabSize :: {-# UNPACK #-} !(IORef Int)
     }
 
 data Bucket a = Empty
@@ -61,8 +61,7 @@ new capacity = IntTable `liftM` (newIORef =<< new_ capacity)
 new_ :: Int -> IO (IT a)
 new_ capacity = do
   arr <- Arr.new Empty capacity
-  size <- mallocForeignPtr
-  withForeignPtr size $ \ptr -> poke ptr 0
+  size <- newIORef 0
   return IT { tabArr = arr
             , tabSize = size
             }
@@ -81,7 +80,7 @@ grow oldit ref size = do
                 copyBucket (m+1) bucketNext
           copyBucket n =<< Arr.read (tabArr oldit) i
   copySlot 0 0
-  withForeignPtr (tabSize newit) $ \ptr -> poke ptr size
+  writeIORef (tabSize newit) size
   writeIORef ref newit
 
 -- | @insertWith f k v table@ inserts @k@ into @table@ with value @v@.
@@ -100,13 +99,13 @@ insertWith f k v inttable@(IntTable ref) = do
           Arr.write tabArr idx (Bucket k v' next)
           return (Just bucketValue)
         | otherwise = go bkt { bucketNext = seen } bucketNext
-      go seen _ = withForeignPtr tabSize $ \ptr -> do
-        size <- peek ptr
+      go seen _ = do
+        size <- readIORef tabSize
         if size + 1 >= Arr.size tabArr - (Arr.size tabArr `shiftR` 2)
           then grow it ref size >> insertWith f k v inttable
           else do
             v `seq` Arr.write tabArr idx (Bucket k v seen)
-            poke ptr (size + 1)
+            writeIORef tabSize (size + 1)
             return Nothing
   go Empty =<< Arr.read tabArr idx
 {-# INLINABLE insertWith #-}
@@ -139,8 +138,6 @@ updateWith f k (IntTable ref) = do
   when (isJust oldVal) $ do
     Arr.write tabArr idx newBucket
     when del $
-      withForeignPtr tabSize $ \ptr -> do
-        size <- peek ptr
-        poke ptr (size - 1)
+      modifyIORef' tabSize (subtract 1)
   return oldVal
 
