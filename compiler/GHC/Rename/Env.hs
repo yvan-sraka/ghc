@@ -521,20 +521,36 @@ lookupRecFieldOcc mb_con rdr_name
   = lookupGlobalOccRn WantFields rdr_name
 
 -- | Look up an occurrence of a field in a record update, returning the selector
--- name.  Unlike construction and pattern matching with
--- @-XDisambiguateRecordFields@ (see 'lookupRecFieldOcc'), there is no data
--- constructor to help disambiguate, so this may be ambiguous if the field is in
--- scope multiple times.  Here a field is in scope even if @NoFieldSelectors@
--- was enabled at its definition site (see Note [NoFieldSelectors]).
+-- name.
+--
+-- Unlike construction and pattern matching with @-XDisambiguateRecordFields@
+-- (see 'lookupRecFieldOcc'), there is no data constructor to help disambiguate,
+-- so this may be ambiguous if the field is in scope multiple times.  However we
+-- ignore non-fields in scope with the same name if @-XDisambiguateRecordFields@
+-- is on (see Note [DisambiguateRecordFields for updates]).
+--
+-- Here a field is in scope even if @NoFieldSelectors@ was enabled at its
+-- definition site (see Note [NoFieldSelectors]).
 lookupRecFieldOcc_update
   :: DuplicateRecordFields
   -> RdrName
   -> RnM AmbiguousResult
 lookupRecFieldOcc_update overload_ok rdr_name = do
-    mr <- lookupGlobalOccRn_overloaded overload_ok WantFields rdr_name
+    disambig_ok <- xoptM LangExt.DisambiguateRecordFields
+    let want | disambig_ok = OnlyFields
+             | otherwise   = WantFields
+    mr <- lookupGlobalOccRn_overloaded overload_ok want rdr_name
     case mr of
         Just r  -> return r
-        Nothing -> UnambiguousGre . NormalGreName <$> unboundName WL_Global rdr_name
+        Nothing  -- Try again if we previously looked only for fields, see
+                 -- Note [DisambiguateRecordFields for updates]
+          | disambig_ok -> do mr' <- lookupGlobalOccRn_overloaded overload_ok WantFields rdr_name
+                              case mr' of
+                                  Just r -> return r
+                                  Nothing -> unbound
+          | otherwise   -> unbound
+  where
+    unbound = UnambiguousGre . NormalGreName <$> unboundName WL_Global rdr_name
 
 
 
@@ -581,6 +597,42 @@ will fail because the field RdrName `B.x` is qualified and pickGREs
 rejects the GRE.  In case `e3`, lookupGRE_FieldLabel will return the
 GRE for `A.x` and the guard will succeed because the field RdrName `x`
 is unqualified.
+
+
+Note [DisambiguateRecordFields for updates]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+When we are looking up record fields in record update, we can take advantage of
+the fact that we know we are looking for a field, even though we do not know the
+data constructor name (as in Note [DisambiguateRecordFields]), provided the
+-XDisambiguateRecordFields flag is on.
+
+For example, consider:
+
+   module N where
+     f = ()
+
+   {-# LANGUAGE DisambiguateRecordFields #-}
+   module M where
+     import N (f)
+     data T = MkT { f :: Int }
+     t = MkT { f = 1 }  -- unambiguous because MkT determines which field we mean
+     u = t { f = 2 }    -- unambiguous because we ignore the non-field 'f'
+
+This works by lookupRecFieldOcc_update using 'OnlyFields :: FieldsOrSelectors'
+when looking up the field name, so that 'filterFieldGREs' will later ignore any
+non-fields in scope.  Of course, if a record update has two fields in scope with
+the same name, it is still ambiguous.
+
+If we do not find anything when looking only for fields, we try again allowing
+fields or non-fields.  This leads to a better error message if the user
+mistakenly tries to use a non-field name in a record update:
+
+    f = ()
+    e x = x { f = () }
+
+Unlike with constructors or pattern-matching, we do not allow the module
+qualifier to be omitted, because we do not have a data constructor from which to
+determine it.
 
 
 Note [Fall back on lookupGlobalOccRn in lookupRecFieldOcc]

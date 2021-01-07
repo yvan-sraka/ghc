@@ -843,11 +843,14 @@ lookupGlobalRdrEnv env occ_name = case lookupOccEnv env occ_name of
 data FieldsOrSelectors
     = WantFields    -- ^ Include fields from @NoFieldSelectors@ modules
     | WantSelectors -- ^ Ignore such fields during lookup
+    | OnlyFields    -- ^ Include only fields, with or without @FieldSelectors@,
+                    -- ignoring any non-fields in scope
   deriving Eq
 
 filterFieldGREs :: FieldsOrSelectors -> [GlobalRdrElt] -> [GlobalRdrElt]
 filterFieldGREs WantFields    = id
 filterFieldGREs WantSelectors = filter (not . isNoFieldSelectorGRE)
+filterFieldGREs OnlyFields    = filter isRecFldGRE
 
 lookupGRE_RdrName :: RdrName -> GlobalRdrEnv -> [GlobalRdrElt]
 lookupGRE_RdrName = lookupGRE_RdrName' WantSelectors
