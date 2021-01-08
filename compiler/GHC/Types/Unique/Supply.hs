@@ -45,7 +45,7 @@ import GHC.Utils.Monad
 import Control.Monad
 import Data.Bits
 import Data.Char
-import GHC.Exts( Ptr(..), noDuplicate# )
+import GHC.Exts( Ptr(..), noDuplicate#, oneShot )
 #if MIN_VERSION_GLASGOW_HASKELL(9,1,0,0)
 import GHC.Exts( Int(..), word2Int#, fetchAddWordAddr#, plusWord#, readWordOffAddr# )
 #if defined(DEBUG)
@@ -239,13 +239,19 @@ data UniqResult result = UniqResult !result {-# UNPACK #-} !UniqSupply
 newtype UniqSM result = USM { unUSM :: UniqSupply -> UniqResult result }
     deriving (Functor)
 
+-- | Smart constructor for 'UniqSM', as described in Note [The one-shot state
+-- monad trick].
+mkUniqSM :: (UniqSupply -> UniqResult a) -> UniqSM a
+mkUniqSM f = USM (oneShot f)
+{-# INLINE mkUniqSM #-}
+
 instance Monad UniqSM where
   (>>=) = thenUs
   (>>)  = (*>)
 
 instance Applicative UniqSM where
     pure = returnUs
-    (USM f) <*> (USM x) = USM $ \us0 -> case f us0 of
+    (USM f) <*> (USM x) = mkUniqSM $ \us0 -> case f us0 of
                             UniqResult ff us1 -> case x us1 of
                               UniqResult xx us2 -> UniqResult (ff xx) us2
     (*>) = thenUs_
@@ -272,22 +278,22 @@ liftUSM :: UniqSM a -> UniqSupply -> (a, UniqSupply)
 liftUSM (USM m) us0 = case m us0 of UniqResult a us1 -> (a, us1)
 
 instance MonadFix UniqSM where
-    mfix m = USM (\us0 -> let (r,us1) = liftUSM (m r) us0 in UniqResult r us1)
+    mfix m = mkUniqSM (\us0 -> let (r,us1) = liftUSM (m r) us0 in UniqResult r us1)
 
 thenUs :: UniqSM a -> (a -> UniqSM b) -> UniqSM b
 thenUs (USM expr) cont
-  = USM (\us0 -> case (expr us0) of
+  = mkUniqSM (\us0 -> case (expr us0) of
                    UniqResult result us1 -> unUSM (cont result) us1)
 
 thenUs_ :: UniqSM a -> UniqSM b -> UniqSM b
 thenUs_ (USM expr) (USM cont)
-  = USM (\us0 -> case (expr us0) of { UniqResult _ us1 -> cont us1 })
+  = mkUniqSM (\us0 -> case (expr us0) of { UniqResult _ us1 -> cont us1 })
 
 returnUs :: a -> UniqSM a
-returnUs result = USM (\us -> UniqResult result us)
+returnUs result = mkUniqSM (\us -> UniqResult result us)
 
 getUs :: UniqSM UniqSupply
-getUs = USM (\us0 -> case splitUniqSupply us0 of (us1,us2) -> UniqResult us1 us2)
+getUs = mkUniqSM (\us0 -> case splitUniqSupply us0 of (us1,us2) -> UniqResult us1 us2)
 
 -- | A monad for generating unique identifiers
 class Monad m => MonadUnique m where
@@ -311,9 +317,9 @@ instance MonadUnique UniqSM where
     getUniquesM = getUniquesUs
 
 getUniqueUs :: UniqSM Unique
-getUniqueUs = USM (\us0 -> case takeUniqFromSupply us0 of
+getUniqueUs = mkUniqSM (\us0 -> case takeUniqFromSupply us0 of
                            (u,us1) -> UniqResult u us1)
 
 getUniquesUs :: UniqSM [Unique]
-getUniquesUs = USM (\us0 -> case splitUniqSupply us0 of
+getUniquesUs = mkUniqSM (\us0 -> case splitUniqSupply us0 of
                             (us1,us2) -> UniqResult (uniqsFromSupply us1) us2)
