@@ -392,6 +392,7 @@ rtsPackageArgs = package rts ? do
           ]
         , builder (Cc FindCDependencies) ? cArgs
         , builder (Ghc CompileCWithGhc) ? map ("-optc" ++) <$> cArgs
+        , builder (Ghc CompileCppWithGhc) ? map ("-optcxx" ++) <$> cArgs
         , builder Ghc ? ghcArgs
 
         , builder HsCpp ? pure
