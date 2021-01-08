@@ -850,7 +850,7 @@ allocRegsAndSpill_spill reading keep spills alloc r rs assig spill_loc
         case freeRegs_thisClass of
          -- case (2): we have a free register
          (first_free : _) ->
-           do   let final_reg
+           do   let !final_reg
                         | Just reg <- pref_reg
                         , reg `elem` freeRegs_thisClass
                         = reg
