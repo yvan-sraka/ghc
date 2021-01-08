@@ -172,18 +172,18 @@ regAlloc config (CmmProc static lbl live sccs)
         | LiveInfo info entry_ids@(first_id:_) block_live _ <- static
         = do
                 -- do register allocation on each component.
-                (final_blocks, stats, stack_use)
+                !(!final_blocks, !stats, !stack_use)
                         <- linearRegAlloc config entry_ids block_live sccs
 
                 -- make sure the block that was first in the input list
                 --      stays at the front of the output
-                let ((first':_), rest')
+                let !(!(!first':_), !rest')
                                 = partition ((== first_id) . blockId) final_blocks
 
                 let max_spill_slots = maxSpillSlots config
                     extra_stack
                       | stack_use > max_spill_slots
-                      = Just (stack_use - max_spill_slots)
+                      = Just $! stack_use - max_spill_slots
                       | otherwise
                       = Nothing
 
