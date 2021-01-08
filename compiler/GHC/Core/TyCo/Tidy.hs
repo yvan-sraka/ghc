@@ -131,7 +131,7 @@ tidyType :: TidyEnv -> Type -> Type
 tidyType _   (LitTy n)             = LitTy n
 tidyType env (TyVarTy tv)          = TyVarTy (tidyTyCoVarOcc env tv)
 tidyType env (TyConApp tycon tys)  = let args = tidyTypes env tys
-                                     in args `seqList` TyConApp tycon args
+                                     in args `seqList` mkTyConApp tycon args
 tidyType env (AppTy fun arg)       = (AppTy $! (tidyType env fun)) $! (tidyType env arg)
 tidyType env ty@(FunTy _ w arg res)  = let { !w'   = tidyType env w
                                            ; !arg' = tidyType env arg
