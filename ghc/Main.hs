@@ -83,6 +83,10 @@ import qualified Data.Set as Set
 import Data.Maybe
 import Prelude
 
+#if defined(GHC_DEBUG)
+import GHC.Debug.Stub
+#endif
+
 -----------------------------------------------------------------------------
 -- ToDo:
 
@@ -95,8 +99,15 @@ import Prelude
 -----------------------------------------------------------------------------
 -- GHC's command-line interface
 
+debugWrapper :: IO a -> IO a
+#if defined(GHC_DEBUG)
+debugWrapper = withGhcDebug
+#else
+debugWrapper = id
+#endif
+
 main :: IO ()
-main = do
+main = debugWrapper $ do
    initGCStatistics -- See Note [-Bsymbolic and hooks]
    hSetBuffering stdout LineBuffering
    hSetBuffering stderr LineBuffering

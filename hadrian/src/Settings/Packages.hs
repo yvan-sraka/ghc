@@ -85,6 +85,7 @@ packageArgs = do
 
           , builder (Cabal Flags) ? mconcat
             [ ghcWithInterpreter ? notStage0 ? arg "internal-interpreter"
+            , notStage0? arg "ghc-debug"
             , cross ? arg "-terminfo"
             -- Note [Linking ghc-bin against threaded stage0 RTS]
             -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
