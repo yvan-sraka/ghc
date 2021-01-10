@@ -35,11 +35,8 @@ import {-# SOURCE #-} GHC.Hs.Pat.Types
 import GHC.Hs.Extension
 import GHC.Hs.Type.Types
 import GHC.Core
-import GHC.Tc.Types.Evidence
-import GHC.Core.Type
 import GHC.Types.Basic
 import GHC.Types.SourceText
-import GHC.Types.SrcLoc as SrcLoc
 import GHC.Types.Var
 import GHC.Types.Fixity
 import GHC.Data.Bag
@@ -47,7 +44,6 @@ import GHC.Data.BooleanFormula (LBooleanFormula)
 
 import GHC.Utils.Outputable
 
-import Data.Data hiding ( Fixity )
 import Data.Void
 
 {-
@@ -263,28 +259,6 @@ data HsBindLR idL idR
         var_rhs    :: LHsExpr idR    -- ^ Located only for consistency
     }
 
-  -- | Abstraction Bindings
-  | AbsBinds {                      -- Binds abstraction; TRANSLATION
-        abs_ext     :: XAbsBinds idL idR,
-        abs_tvs     :: [TyVar],
-        abs_ev_vars :: [EvVar],  -- ^ Includes equality constraints
-
-       -- | AbsBinds only gets used when idL = idR after renaming,
-       -- but these need to be idL's for the collect... code in HsUtil
-       -- to have the right type
-        abs_exports :: [ABExport idL],
-
-        -- | Evidence bindings
-        -- Why a list? See "GHC.Tc.TyCl.Instance"
-        -- Note [Typechecking plan for instance declarations]
-        abs_ev_binds :: [TcEvBinds],
-
-        -- | Typechecked user bindings
-        abs_binds    :: LHsBinds idL,
-
-        abs_sig :: Bool  -- See Note [The abs_sig field of AbsBinds]
-    }
-
   -- | Patterns Synonym Binding
   | PatSynBind
         (XPatSynBind idL idR)
@@ -310,17 +284,6 @@ data HsBindLR idL idR
         --      3. ftvs includes all tyvars free in ds
         --
         -- See Note [AbsBinds]
-
--- | Abstraction Bindings Export
-data ABExport p
-  = ABE { abe_ext       :: XABE p
-        , abe_poly      :: IdP p -- ^ Any INLINE pragma is attached to this Id
-        , abe_mono      :: IdP p
-        , abe_wrap      :: HsWrapper    -- ^ See Note [ABExport wrapper]
-             -- Shape: (forall abs_tvs. abs_ev_vars => abe_mono) ~ abe_poly
-        , abe_prags     :: TcSpecPrags  -- ^ SPECIALISE pragmas
-        }
-   | XABExport !(XXABExport p)
 
 
 -- | - 'GHC.Parser.Annotation.AnnKeywordId' : 'GHC.Parser.Annotation.AnnPattern',
@@ -790,39 +753,6 @@ type LFixitySig pass = XRec pass (FixitySig pass)
 -- | Fixity Signature
 data FixitySig pass = FixitySig (XFixitySig pass) [LIdP pass] Fixity
                     | XFixitySig !(XXFixitySig pass)
-
--- | Type checker Specialisation Pragmas
---
--- 'TcSpecPrags' conveys @SPECIALISE@ pragmas from the type checker to the desugarer
-data TcSpecPrags
-  = IsDefaultMethod     -- ^ Super-specialised: a default method should
-                        -- be macro-expanded at every call site
-  | SpecPrags [LTcSpecPrag]
-  deriving Data
-
--- | Located Type checker Specification Pragmas
-type LTcSpecPrag = Located TcSpecPrag
-
--- | Type checker Specification Pragma
-data TcSpecPrag
-  = SpecPrag
-        Id
-        HsWrapper
-        InlinePragma
-  -- ^ The Id to be specialised, a wrapper that specialises the
-  -- polymorphic function, and inlining spec for the specialised function
-  deriving Data
-
-noSpecPrags :: TcSpecPrags
-noSpecPrags = SpecPrags []
-
-hasSpecPrags :: TcSpecPrags -> Bool
-hasSpecPrags (SpecPrags ps) = not (null ps)
-hasSpecPrags IsDefaultMethod = False
-
-isDefaultMethod :: TcSpecPrags -> Bool
-isDefaultMethod IsDefaultMethod = True
-isDefaultMethod (SpecPrags {})  = False
 
 isFixityLSig :: forall p. UnXRec p => LSig p -> Bool
 isFixityLSig (unXRec @p -> FixSig {}) = True

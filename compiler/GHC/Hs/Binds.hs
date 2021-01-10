@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE DeriveFunctor #-}
@@ -42,6 +43,7 @@ import GHC.Types.Name.Set
 import GHC.Types.Basic
 import GHC.Types.SourceText
 import GHC.Types.SrcLoc as SrcLoc
+import GHC.Types.Var
 import GHC.Data.Bag
 import GHC.Data.FastString
 import GHC.Data.BooleanFormula (LBooleanFormula)
@@ -49,6 +51,7 @@ import GHC.Data.BooleanFormula (LBooleanFormula)
 import GHC.Utils.Outputable
 import GHC.Utils.Panic
 
+import Data.Data hiding ( Fixity )
 import Data.List hiding ( foldr )
 import Data.Function
 
@@ -97,18 +100,57 @@ type instance XPatBind    GhcRn (GhcPass pR) = NameSet -- Free variables
 type instance XPatBind    GhcTc (GhcPass pR) = Type    -- Type of the GRHSs
 
 type instance XVarBind    (GhcPass pL) (GhcPass pR) = NoExtField
-type instance XAbsBinds   (GhcPass pL) (GhcPass pR) = NoExtField
 type instance XPatSynBind (GhcPass pL) (GhcPass pR) = NoExtField
-type instance XXHsBindsLR (GhcPass pL) (GhcPass pR) = NoExtCon
 
-type instance XABE       (GhcPass p) = NoExtField
-type instance XXABExport (GhcPass p) = NoExtCon
+type instance XXHsBindsLR GhcPs (GhcPass pR) = NoExtCon
+type instance XXHsBindsLR GhcRn (GhcPass pR) = NoExtCon
+type instance XXHsBindsLR GhcTc (GhcPass pR) = AbsBinds GhcTc (GhcPass pR)
 
 type instance XPSB         (GhcPass idL) GhcPs = NoExtField
 type instance XPSB         (GhcPass idL) GhcRn = NameSet
 type instance XPSB         (GhcPass idL) GhcTc = NameSet
 
 type instance XXPatSynBind (GhcPass idL) (GhcPass idR) = NoExtCon
+
+-- ---------------------------------------------------------------------
+
+-- | Abstraction Bindings
+data AbsBinds idL idR = AbsBinds {
+      abs_ext     :: XAbsBinds idL idR,
+      abs_tvs     :: [TyVar],
+      abs_ev_vars :: [EvVar],  -- ^ Includes equality constraints
+
+     -- | AbsBinds only gets used when idL = idR after renaming,
+     -- but these need to be idL's for the collect... code in HsUtil
+     -- to have the right type
+      abs_exports :: [ABExport idL],
+
+      -- | Evidence bindings
+      -- Why a list? See "GHC.Tc.TyCl.Instance"
+      -- Note [Typechecking plan for instance declarations]
+      abs_ev_binds :: [TcEvBinds],
+
+      -- | Typechecked user bindings
+      abs_binds    :: LHsBinds idL,
+
+      abs_sig :: Bool  -- See Note [The abs_sig field of AbsBinds]
+  }
+
+type instance XAbsBinds   (GhcPass pL) (GhcPass pR) = NoExtField
+
+-- | Abstraction Bindings Export
+data ABExport p
+  = ABE { abe_ext       :: XABE p
+        , abe_poly      :: IdP p -- ^ Any INLINE pragma is attached to this Id
+        , abe_mono      :: IdP p
+        , abe_wrap      :: HsWrapper    -- ^ See Note [ABExport wrapper]
+             -- Shape: (forall abs_tvs. abs_ev_vars => abe_mono) ~ abe_poly
+        , abe_prags     :: TcSpecPrags  -- ^ SPECIALISE pragmas
+        }
+  | XABExport !(XXABExport p)
+
+type instance XABE       (GhcPass p) = NoExtField
+type instance XXABExport (GhcPass p) = NoExtCon
 
 {-
 Note [AbsBinds]
@@ -457,10 +499,13 @@ ppr_monobind (FunBind { fun_id = fun,
     $$  whenPprDebug (pprIfTc @idR $ ppr wrap)
 
 ppr_monobind (PatSynBind _ psb) = ppr psb
-ppr_monobind (AbsBinds { abs_tvs = tyvars, abs_ev_vars = dictvars
-                       , abs_exports = exports, abs_binds = val_binds
-                       , abs_ev_binds = ev_binds })
-  = sdocOption sdocPrintTypecheckerElaboration $ \case
+ppr_monobind (XHsBindsLR b) = case ghcPass @idL of
+#if __GLASGOW_HASKELL__ <= 900
+  GhcPs -> noExtCon b
+  GhcRn -> noExtCon b
+#endif
+  GhcTc ->
+    sdocOption sdocPrintTypecheckerElaboration $ \case
       False -> pprLHsBinds val_binds
       True  -> -- Show extra information (bug number: #10662)
                hang (text "AbsBinds"
@@ -474,6 +519,10 @@ ppr_monobind (AbsBinds { abs_tvs = tyvars, abs_ev_vars = dictvars
                , text "Binds:" <+> pprLHsBinds val_binds
                , pprIfTc @idR (text "Evidence:" <+> ppr ev_binds)
                ]
+    where
+      AbsBinds { abs_tvs = tyvars, abs_ev_vars = dictvars
+               , abs_exports = exports, abs_binds = val_binds
+               , abs_ev_binds = ev_binds } = b
 
 instance OutputableBndrId p => Outputable (ABExport (GhcPass p)) where
   ppr (ABE { abe_wrap = wrap, abe_poly = gbl, abe_mono = lcl, abe_prags = prags })
@@ -574,6 +623,39 @@ type instance XXSig             (GhcPass p) = NoExtCon
 
 type instance XFixitySig  (GhcPass p) = NoExtField
 type instance XXFixitySig (GhcPass p) = NoExtCon
+
+-- | Type checker Specialisation Pragmas
+--
+-- 'TcSpecPrags' conveys @SPECIALISE@ pragmas from the type checker to the desugarer
+data TcSpecPrags
+  = IsDefaultMethod     -- ^ Super-specialised: a default method should
+                        -- be macro-expanded at every call site
+  | SpecPrags [LTcSpecPrag]
+  deriving Data
+
+-- | Located Type checker Specification Pragmas
+type LTcSpecPrag = Located TcSpecPrag
+
+-- | Type checker Specification Pragma
+data TcSpecPrag
+  = SpecPrag
+        Id
+        HsWrapper
+        InlinePragma
+  -- ^ The Id to be specialised, a wrapper that specialises the
+  -- polymorphic function, and inlining spec for the specialised function
+  deriving Data
+
+noSpecPrags :: TcSpecPrags
+noSpecPrags = SpecPrags []
+
+hasSpecPrags :: TcSpecPrags -> Bool
+hasSpecPrags (SpecPrags ps) = not (null ps)
+hasSpecPrags IsDefaultMethod = False
+
+isDefaultMethod :: TcSpecPrags -> Bool
+isDefaultMethod IsDefaultMethod = True
+isDefaultMethod (SpecPrags {})  = False
 
 {-
 Check if signatures overlap; this is used when checking for duplicate
