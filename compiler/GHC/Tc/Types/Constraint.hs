@@ -218,6 +218,9 @@ data Ct
       --     look like this, with the payload in an
       --     auxiliary type
 
+  -- TODO(csongor): Add a new type of constraint here that talks about
+  -- unifiability of two evidence formulas
+
 ------------
 -- | A 'CanEqLHS' is a type that can appear on the left of a canonical
 -- equality: a type variable or exactly-saturated type family application.

@@ -768,6 +768,7 @@ data Token
   | ITrarrow            IsUnicodeSyntax
   | ITdarrow            IsUnicodeSyntax
   | ITlolly       -- The (⊸) arrow (for LinearTypes)
+  | ITdlolly            IsUnicodeSyntax
   | ITminus       -- See Note [Minus tokens]
   | ITprefixminus -- See Note [Minus tokens]
   | ITbang     -- Prefix (!) only, e.g. f !x = rhs
@@ -1005,6 +1006,7 @@ reservedSymsFM = listToUFM $
        ,("<-",  ITlarrow NormalSyntax,      NormalSyntax,  0 )
        ,("->",  ITrarrow NormalSyntax,      NormalSyntax,  0 )
        ,("=>",  ITdarrow NormalSyntax,      NormalSyntax,  0 )
+       ,("=>.", ITdlolly NormalSyntax,      NormalSyntax,  0 )
        ,("-",   ITminus,                    NormalSyntax,  xbit NoLexicalNegationBit)
 
        ,("*",   ITstar NormalSyntax,        NormalSyntax,  xbit StarIsTypeBit)

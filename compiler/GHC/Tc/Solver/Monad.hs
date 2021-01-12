@@ -33,6 +33,8 @@ module GHC.Tc.Solver.Monad (
     wrapErrTcS, wrapWarnTcS,
     resetUnificationFlag, setUnificationFlag,
 
+    emitBindingUsageTcS,
+
     -- Evidence creation and transformation
     MaybeNew(..), freshGoals, isFresh, getEvExpr,
 
@@ -182,6 +184,10 @@ import GHC.Data.Maybe
 
 import GHC.Core.Map.Type
 import GHC.Data.TrieMap
+
+import GHC.Core
+import GHC.Core.UsageEnv
+import GHC.Core.Multiplicity
 
 import Control.Monad
 import GHC.Utils.Monad
@@ -2803,7 +2809,9 @@ data TcSEnv
       tcs_inerts    :: IORef InertSet, -- Current inert set
 
       -- See Note [WorkList priorities] and
-      tcs_worklist  :: IORef WorkList -- Current worklist
+      tcs_worklist  :: IORef WorkList, -- Current worklist
+
+      tcs_usage :: IORef UsageEnv
     }
 
 ---------------
@@ -2871,6 +2879,20 @@ bumpStepCountTcS :: TcS ()
 bumpStepCountTcS = TcS $ \env -> do { let ref = tcs_count env
                                     ; n <- TcM.readTcRef ref
                                     ; TcM.writeTcRef ref (n+1) }
+
+getUsageTcS :: TcS UsageEnv
+getUsageTcS = TcS $ \env ->
+  do { let ref = tcs_usage env
+     ; TcM.readTcRef ref
+     }
+
+unitUETcS :: NamedThing n => n -> Mult -> TcS ()
+unitUETcS n m = TcS $ \env ->
+     TcM.updTcRef (tcs_usage env) (addUE (unitUE n m))
+
+emitBindingUsageTcS :: UsageEnv -> TcS ()
+emitBindingUsageTcS ue = TcS $ \env ->
+     TcM.updTcRef (tcs_usage env) (addUE ue)
 
 csTraceTcS :: SDoc -> TcS ()
 csTraceTcS doc
@@ -2952,13 +2974,15 @@ runTcSWithEvBinds' restore_cycles ev_binds_var tcs
        ; step_count <- TcM.newTcRef 0
        ; inert_var <- TcM.newTcRef emptyInert
        ; wl_var <- TcM.newTcRef emptyWorkList
+       ; usage <- TcM.newTcRef zeroUE
        ; unif_lvl_var <- TcM.newTcRef Nothing
        ; let env = TcSEnv { tcs_ev_binds      = ev_binds_var
                           , tcs_unified       = unified_var
                           , tcs_unif_lvl      = unif_lvl_var
                           , tcs_count         = step_count
                           , tcs_inerts        = inert_var
-                          , tcs_worklist      = wl_var }
+                          , tcs_worklist      = wl_var
+                          , tcs_usage         = usage }
 
              -- Run the computation
        ; res <- unTcS tcs env
@@ -3019,12 +3043,15 @@ nestImplicTcS ref inner_tclvl (TcS thing_inside)
                    , tcs_inerts        = old_inert_var
                    , tcs_count         = count
                    , tcs_unif_lvl      = unif_lvl
+                   , tcs_usage         = old_usage_var -- TODO(csongor): I _think_ it's fine to not nest this
                    } ->
     do { inerts <- TcM.readTcRef old_inert_var
        ; let nest_inert = inerts { inert_cycle_breakers = []
                                  , inert_cans = (inert_cans inerts)
                                                    { inert_given_eqs = False } }
                  -- All other InertSet fields are inherited
+       ; usage <- TcM.readTcRef old_usage_var
+       ; new_usage_var <- TcM.newTcRef usage
        ; new_inert_var <- TcM.newTcRef nest_inert
        ; new_wl_var    <- TcM.newTcRef emptyWorkList
        ; let nest_env = TcSEnv { tcs_count         = count     -- Inherited
@@ -3032,7 +3059,8 @@ nestImplicTcS ref inner_tclvl (TcS thing_inside)
                                , tcs_ev_binds      = ref
                                , tcs_unified       = unified_var
                                , tcs_inerts        = new_inert_var
-                               , tcs_worklist      = new_wl_var }
+                               , tcs_worklist      = new_wl_var
+                               , tcs_usage         = new_usage_var }
        ; res <- TcM.setTcLevel inner_tclvl $
                 thing_inside nest_env
 
@@ -3495,9 +3523,21 @@ getEvExpr (Fresh ctev) = ctEvExpr ctev
 getEvExpr (Cached evt) = evt
 
 setEvBind :: EvBind -> TcS ()
-setEvBind ev_bind
+setEvBind ev_bind@(EvBind { eb_rhs = EvExpr (Var rhs) })
   = do { evb <- getTcEvBindsVar
+       ; unitUETcS rhs One
+       ; ue <- getUsageTcS
+       ; let u = lookupUE ue rhs
+       ; case u of
+          MUsage actual_w@Many -> wrapErrTcS $
+            TcM.addErrTc $ text "Couldn't match expected multiplicity" <+> quotes (ppr One) <+>
+                           text "of variable" <+> quotes (ppr rhs) <+>
+                           text "with actual multiplicity" <+> quotes (ppr actual_w)
+          _ -> return ()
+       ; traceTcS "setting ev bind" (ppr rhs $$ ppr ue)
        ; wrapTcS $ TcM.addTcEvBind evb ev_bind }
+setEvBind ev_bind
+  = pprPanic "setEvBind" (ppr ev_bind)
 
 -- | Mark variables as used filling a coercion hole
 useVars :: CoVarSet -> TcS ()
