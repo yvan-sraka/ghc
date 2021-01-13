@@ -636,7 +636,7 @@ unbox_one dflags fam_envs arg cs
                             , dcac_arg_tys = inst_con_arg_tys
                             , dcac_co = co }
   = do { (uniq1:uniqs) <- getUniquesM
-        ; let   scale = scaleScaled (idMult arg)
+        ; let   !scale = scaleScaled (idMult arg)
                 scaled_inst_con_arg_tys = map (\(t,s) -> (scale t, s)) inst_con_arg_tys
                 -- See Note [Add demands for strict constructors]
                 cs'       = addDataConStrictness data_con cs
