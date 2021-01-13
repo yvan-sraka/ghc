@@ -123,7 +123,7 @@ import GHC.Data.FastString
 import GHC.Types.Unique.DFM
 import GHC.Utils.FV
 import Data.Maybe
-import GHC.Utils.Monad  ( mapAccumLM )
+import GHC.Utils.Monad  ( mapAccumLM' )
 
 {-
 ************************************************************************
@@ -436,7 +436,7 @@ lvlApp env orig_expr ((_,AnnVar fn), args)
         ; return (foldl' App lapp' rargs') }
 
   | otherwise
-  = do { (_, args') <- mapAccumLM lvl_arg stricts args
+  = do { (_, args') <- mapAccumLM' lvl_arg stricts args
             -- Take account of argument strictness; see
             -- Note [Floating to the top]
        ; return (foldl' App (lookupVar env fn) args') }

@@ -62,7 +62,7 @@ pprintClosureCommand bindThings force str = do
   let ids = [id | AnId id <- tythings]
 
   -- Obtain the terms and the recovered type information
-  (subst, terms) <- mapAccumLM go emptyTCvSubst ids
+  (subst, terms) <- mapAccumLM' go emptyTCvSubst ids
 
   -- Apply the substitutions obtained after recovering the types
   modifySession $ \hsc_env ->
