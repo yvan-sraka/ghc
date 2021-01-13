@@ -55,7 +55,7 @@ import GHC.Utils.Error
 import GHC.Utils.Misc
 import GHC.Utils.Panic
 import GHC.Utils.Outputable
-import GHC.Utils.Monad  ( mapAccumLM )
+import GHC.Utils.Monad  ( mapAccumLM' )
 
 import GHC.Types.Demand
 import GHC.Types.Var
@@ -1680,7 +1680,7 @@ lookupCorePrepEnv cpe id
 -- ---------------------------------------------------------------------------
 
 cpCloneBndrs :: CorePrepEnv -> [InVar] -> UniqSM (CorePrepEnv, [OutVar])
-cpCloneBndrs env bs = mapAccumLM cpCloneBndr env bs
+cpCloneBndrs env bs = mapAccumLM' cpCloneBndr env bs
 
 cpCloneBndr  :: CorePrepEnv -> InVar -> UniqSM (CorePrepEnv, OutVar)
 cpCloneBndr env bndr
