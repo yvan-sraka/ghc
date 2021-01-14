@@ -998,13 +998,18 @@ mkPiTy (Named (Bndr tv vis)) ty = mkForAllTy tv vis ty
 mkPiTys :: [TyCoBinder] -> Type -> Type
 mkPiTys tbs ty = foldr mkPiTy ty tbs
 
+-- | Maps 'TyCon' to a static nully 'TyConApp'.
+wired_in_tycon_tys :: TyConEnv Type
+wired_in_tycon_tys = mkTyConEnv
+  [ (tycon, TyConApp tycon [])
+  | tycon <- wiredInTyCons ++ primTyCons
+  ]
+
 -- | Create the plain type constructor type which has been applied to no type arguments at all.
 mkTyConTy :: TyCon -> Type
 mkTyConTy tycon
-  | tycon `hasKey` liftedTypeKindTyConKey
-  = liftedTypeKindTyConApp -- See Note [Prefer Type over TYPE 'LiftedRep].
-  | otherwise
-  = TyConApp tycon []
+  | Just ty <- tycon `lookupTyConEnv` wired_in_tycon_tys = ty
+  | otherwise = TyConApp tycon []
 
 -- | A key function: builds a 'TyConApp' or 'FunTy' as appropriate to
 -- its arguments.  Applies its arguments to the constructor from left to right.
