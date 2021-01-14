@@ -1479,6 +1479,30 @@ tyConBindersTyCoBinders = map to_tyb
     to_tyb (Bndr tv (NamedTCB vis)) = Named (Bndr tv vis)
     to_tyb (Bndr tv (AnonTCB af))   = Anon af (tymult (varType tv))
 
+-- | Create the plain type constructor type which has been applied to no type arguments at all.
+mkTyConTy :: TyCon -> Type
+mkTyConTy tycon = tyConNullaryTy tycon
+
+-- | A key function: builds a 'TyConApp' or 'FunTy' as appropriate to
+-- its arguments.  Applies its arguments to the constructor from left to right.
+mkTyConApp :: TyCon -> [Type] -> Type
+mkTyConApp tycon tys
+  | [] <- tys
+  = mkTyConTy tycon
+
+  | isFunTyCon tycon
+  , [w, _rep1,_rep2,ty1,ty2] <- tys
+  -- The FunTyCon (->) is always a visible one
+  = FunTy { ft_af = VisArg, ft_mult = w, ft_arg = ty1, ft_res = ty2 }
+
+  -- See Note [Prefer Type over TYPE 'LiftedRep].
+  | tycon `hasKey` tYPETyConKey
+  , [rep] <- tys
+  = tYPE rep
+  -- The catch-all case
+  | otherwise
+  = TyConApp tycon tys
+
 
 {-
 --------------------------------------------------------------------

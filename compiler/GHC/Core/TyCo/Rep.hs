@@ -42,7 +42,7 @@ module GHC.Core.TyCo.Rep (
         MCoercion(..), MCoercionR, MCoercionN,
 
         -- * Functions over types
-        mkTyConTy, mkTyVarTy, mkTyVarTys,
+        mkTyConTy_, mkTyVarTy, mkTyVarTys,
         mkTyCoVarTy, mkTyCoVarTys,
         mkFunTy, mkVisFunTy, mkInvisFunTy, mkVisFunTys,
         mkForAllTy, mkForAllTys, mkInvisForAllTys,
@@ -51,7 +51,6 @@ module GHC.Core.TyCo.Rep (
         mkScaledFunTy,
         mkVisFunTyMany, mkVisFunTysMany,
         mkInvisFunTyMany, mkInvisFunTysMany,
-        mkTyConApp,
         tYPE,
 
         -- * Functions over binders
@@ -91,7 +90,7 @@ import GHC.Core.TyCon
 import GHC.Core.Coercion.Axiom
 
 -- others
-import GHC.Builtin.Names ( liftedTypeKindTyConKey, liftedRepDataConKey, manyDataConKey, tYPETyConKey )
+import GHC.Builtin.Names ( liftedRepDataConKey )
 import {-# SOURCE #-} GHC.Builtin.Types ( liftedTypeKindTyCon, liftedTypeKind, manyDataConTy )
 import {-# SOURCE #-} GHC.Builtin.Types.Prim ( tYPETyCon )
 import GHC.Types.Basic ( LeftOrRight(..), pickLR )
@@ -998,44 +997,8 @@ mkPiTy (Named (Bndr tv vis)) ty = mkForAllTy tv vis ty
 mkPiTys :: [TyCoBinder] -> Type -> Type
 mkPiTys tbs ty = foldr mkPiTy ty tbs
 
--- | Maps 'TyCon' to a static nully 'TyConApp'.
-wired_in_tycon_tys :: TyConEnv Type
-wired_in_tycon_tys = mkTyConEnv
-  [ (tycon, TyConApp tycon [])
-  | tycon <- wiredInTyCons ++ primTyCons
-  ]
-
--- | Create the plain type constructor type which has been applied to no type arguments at all.
-mkTyConTy :: TyCon -> Type
-mkTyConTy tycon
-  | Just ty <- tycon `lookupTyConEnv` wired_in_tycon_tys = ty
-  | otherwise = TyConApp tycon []
-
--- | A key function: builds a 'TyConApp' or 'FunTy' as appropriate to
--- its arguments.  Applies its arguments to the constructor from left to right.
-mkTyConApp :: TyCon -> [Type] -> Type
-mkTyConApp tycon tys
-  | isFunTyCon tycon
-  , [w, _rep1,_rep2,ty1,ty2] <- tys
-  -- The FunTyCon (->) is always a visible one
-  = FunTy { ft_af = VisArg, ft_mult = w, ft_arg = ty1, ft_res = ty2 }
-
-  -- See Note [Prefer Type over TYPE 'LiftedRep]
-  | tycon `hasKey` liftedTypeKindTyConKey
-  = ASSERT2( null tys, ppr tycon $$ ppr tys )
-    liftedTypeKindTyConApp
-  | tycon `hasKey` manyDataConKey
-  -- There are a lot of occurrences of 'Many' so it's a small optimisation to
-  -- avoid reboxing every time `mkTyConApp` is called.
-  = ASSERT2( null tys, ppr tycon $$ ppr tys )
-    manyDataConTy
-  -- See Note [Prefer Type over TYPE 'LiftedRep].
-  | tycon `hasKey` tYPETyConKey
-  , [rep] <- tys
-  = tYPE rep
-  -- The catch-all case
-  | otherwise
-  = TyConApp tycon tys
+mkTyConTy_ :: TyCon -> Type
+mkTyConTy_ tycon = TyConApp tycon []
 
 {-
 Note [Prefer Type over TYPE 'LiftedRep]
@@ -1103,12 +1066,6 @@ tYPE (TyConApp tc [])
   -- See Note [Prefer Type of TYPE 'LiftedRep]
   | tc `hasKey` liftedRepDataConKey = liftedTypeKind  -- TYPE 'LiftedRep
 tYPE rr = TyConApp tYPETyCon [rr]
-
--- This is a single, global definition of the type `Type`
--- Defined here so it is only allocated once.
--- See Note [Prefer Type over TYPE 'LiftedRep] in this module.
-liftedTypeKindTyConApp :: Type
-liftedTypeKindTyConApp = TyConApp liftedTypeKindTyCon []
 
 {-
 %************************************************************************
