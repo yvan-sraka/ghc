@@ -986,8 +986,8 @@ Main Theorem [Stability under extension]
 
                 AND (K2): guarantees inertness of the new substitution
                     {  (K2a) not (fs >= fs)
-                    OR (K2b) fs >= fw
-                    OR (K2d) t0 not in s }
+                    OR (K2b) if t0' is a tyvar: fs >= fw
+                    OR (K2c) t0 not in s }
 
                 AND (K3) See Note [K3: completeness of solving]
                     { (K3a) If the role of fs is nominal: s /= t0
@@ -1049,15 +1049,10 @@ The idea is that
 
     (NB: we could strengten K1) in this way too, but see K3.
 
-  - (K2b): If this holds then, by (T2), b is not in t.  So applying the
+  - (K2b): If this holds then, by (T2), t0' is not in t.  So applying the
     work item does not generate any new opportunities for applying S
 
-  - (K2c): If this holds, we can't pass through this triple infinitely
-    often, because if we did then fs>=f, fw>=f, hence by (R2)
-      * either fw>=fs, contradicting K2c
-      * or fs>=fw; so by the argument in K2b we can't have a loop
-
-  - (K2d): if a not in s, we hae no further opportunity to apply the
+  - (K2c): if a not in s, we hae no further opportunity to apply the
     work item, similar to (K2b)
 
   NB: Dimitrios has a PDF that does this in more detail
@@ -1920,9 +1915,9 @@ kick_out_rewritable new_fr new_lhs
         fs = (ctEvFlavour ev, eq_rel)
         kick_out_for_inertness
           =        (fs `eqMayRewriteFR` fs)       -- (K2a)
-            && not (fs `eqMayRewriteFR` new_fr)   -- (K2b)
-            && fr_can_rewrite_ty eq_rel rhs_ty    -- (K2d)
-            -- (K2c) is guaranteed by the first guard of keep_eq
+            && (case lhs of TyVarLHS _ -> not (fs `eqMayRewriteFR` new_fr)
+                            _          -> True)   -- (K2b)
+            && fr_can_rewrite_ty eq_rel rhs_ty    -- (K2c)
 
         kick_out_for_completeness  -- (K3) and Note [K3: completeness of solving]
           = case eq_rel of
