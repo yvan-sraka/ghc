@@ -345,6 +345,7 @@ basicKnownKeyNames
         assertErrorName, traceName,
         printName, fstName, sndName,
         dollarName,
+        leftSectionName, rightSectionName,
 
         -- ghc-bignum
         integerFromNaturalName,
@@ -1104,6 +1105,10 @@ breakpointName    = varQual gHC_BASE (fsLit "breakpoint") breakpointIdKey
 breakpointCondName= varQual gHC_BASE (fsLit "breakpointCond") breakpointCondIdKey
 opaqueTyConName   = tcQual  gHC_BASE (fsLit "Opaque")     opaqueTyConKey
 fromStringName = varQual dATA_STRING (fsLit "fromString") fromStringClassOpKey
+
+leftSectionName, rightSectionName :: Name
+leftSectionName  = varQual gHC_BASE (fsLit "leftSection")  leftSectionKey
+rightSectionName = varQual gHC_BASE (fsLit "rightSection") rightSectionKey
 
 -- PrelTup
 fstName, sndName :: Name
@@ -2211,6 +2216,9 @@ sndIdKey                      = mkPreludeMiscIdUnique 42
 otherwiseIdKey                = mkPreludeMiscIdUnique 43
 assertIdKey                   = mkPreludeMiscIdUnique 44
 
+leftSectionKey, rightSectionKey :: Unique
+leftSectionKey                = mkPreludeMiscIdUnique 45
+rightSectionKey               = mkPreludeMiscIdUnique 46
 
 rootMainKey, runMainKey :: Unique
 rootMainKey                   = mkPreludeMiscIdUnique 101

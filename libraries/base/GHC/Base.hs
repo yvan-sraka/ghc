@@ -1135,6 +1135,19 @@ The rest of the prelude list functions are in GHC.List.
 -}
 
 ----------------------------------------------
+--      Left and right sections
+-- Used when desugaring (`op` e) and (e `op)
+----------------------------------------------
+
+{-# INLINE leftSection #-}
+leftSection :: (a->b->c) -> a -> b -> c
+leftSection f x = \y -> f x y
+
+{-# INLINE rightSection #-}
+rightSection :: (a->b->c) -> b -> a -> c
+rightSection f y = \x -> f x y
+
+----------------------------------------------
 --      foldr/build/augment
 ----------------------------------------------
 

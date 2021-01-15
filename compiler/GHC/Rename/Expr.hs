@@ -130,7 +130,7 @@ rnExpr (HsVar _ (L l v))
                                        -- OverloadedLists works correctly
                                        -- Note [Empty lists] in GHC.Hs.Expr
               , xopt LangExt.OverloadedLists dflags
-              -> rnExpr (ExplicitList noExtField Nothing [])
+              -> rnExpr (ExplicitList noExtField [])
 
               | otherwise
               -> finishHsVar (L l name) ;
@@ -147,12 +147,14 @@ rnExpr (HsIPVar x v)
 rnExpr (HsUnboundVar x v)
   = return (HsUnboundVar x v, emptyFVs)
 
-rnExpr (HsOverLabel x _ v)
-  = do { rebindable_on <- xoptM LangExt.RebindableSyntax
-       ; if rebindable_on
-         then do { fromLabel <- lookupOccRn (mkVarUnqual (fsLit "fromLabel"))
-                 ; return (HsOverLabel x (Just fromLabel) v, unitFV fromLabel) }
-         else return (HsOverLabel x Nothing v, emptyFVs) }
+rnExpr (HsOverLabel _ v)
+  = do { (from_label, fvs) <- lookupSyntaxName fromLabelClassOpName
+       ; return ( mkExpandedExpr (HsOverLabel noExtField v) $
+                  HsAppType noExtField (genLHsVar from_label) hs_ty_arg
+                , fvs ) }
+  where
+    hs_ty_arg = mkEmptyWildCardBndrs $ wrapGenSpan $
+                HsTyLit noExtField (HsStrTy NoSourceText v)
 
 rnExpr (HsLit x lit@(HsString src s))
   = do { opt_OverloadedStrings <- xoptM LangExt.OverloadedStrings
@@ -269,16 +271,19 @@ rnExpr (HsDo x do_or_lc (L l stmts))
              (\ _ -> return ((), emptyFVs))
         ; return ( HsDo x do_or_lc (L l stmts'), fvs ) }
 
-rnExpr (ExplicitList x _  exps)
-  = do  { opt_OverloadedLists <- xoptM LangExt.OverloadedLists
-        ; (exps', fvs) <- rnExprs exps
-        ; if opt_OverloadedLists
-           then do {
-            ; (from_list_n_name, fvs') <- lookupSyntax fromListNName
-            ; return (ExplicitList x (Just from_list_n_name) exps'
-                     , fvs `plusFV` fvs') }
-           else
-            return  (ExplicitList x Nothing exps', fvs) }
+rnExpr (ExplicitList x exps)
+  = do  { (exps', fvs) <- rnExprs exps
+        ; opt_OverloadedLists <- xoptM LangExt.OverloadedLists
+        ; if not opt_OverloadedLists
+          then return  (ExplicitList x exps', fvs)
+          else
+    do { (from_list_n_name, fvs') <- lookupSyntaxName fromListNName
+       ; let rn_list  = ExplicitList x exps'
+             lit_n    = mkIntegralLit (length exps)
+             hs_lit   = wrapGenSpan (HsLit noExtField (HsInt noExtField lit_n))
+             exp_list = genHsApps from_list_n_name [hs_lit, wrapGenSpan rn_list]
+       ; return ( mkExpandedExpr rn_list exp_list
+                , fvs `plusFV` fvs') } }
 
 rnExpr (ExplicitTuple x tup_args boxity)
   = do { checkTupleSection tup_args
@@ -320,12 +325,14 @@ rnExpr (ExprWithTySig _ expr pty)
         ; (expr', fvExpr) <- bindSigTyVarsFV (hsWcScopedTvs pty') $
                              rnLExpr expr
         ; return (ExprWithTySig noExtField expr' pty', fvExpr `plusFV` fvTy) }
+
 rnExpr (HsIf _ p b1 b2)
-  = do { (p', fvP) <- rnLExpr p
+  = do { (p',  fvP)  <- rnLExpr p
        ; (b1', fvB1) <- rnLExpr b1
        ; (b2', fvB2) <- rnLExpr b2
-       ; mifteName <- lookupReboundIf
        ; let subFVs = plusFVs [fvP, fvB1, fvB2]
+
+       ; mifteName <- lookupSyntaxName_maybe (mkVarOcc "ifThenElse")
        ; return $ case mifteName of
            -- RS is off, we keep an 'HsIf' node around
            Nothing ->
@@ -333,8 +340,9 @@ rnExpr (HsIf _ p b1 b2)
            -- See Note [Rebindable syntax and HsExpansion].
            Just ifteName ->
              let ifteExpr = rebindIf ifteName p' b1' b2'
-             in (ifteExpr, plusFVs [unitFV (unLoc ifteName), subFVs])
+             in (ifteExpr, plusFVs [unitFV ifteName, subFVs])
        }
+
 rnExpr (HsMultiIf x alts)
   = do { (alts', fvs) <- mapFvRn (rnGRHS IfAlt rnLExpr) alts
        -- ; return (HsMultiIf ty alts', fvs) }
@@ -410,13 +418,23 @@ rnSection section@(SectionR x op expr)
   = do  { (op', fvs_op)     <- rnLExpr op
         ; (expr', fvs_expr) <- rnLExpr expr
         ; checkSectionPrec InfixR section op' expr'
-        ; return (SectionR x op' expr', fvs_op `plusFV` fvs_expr) }
+        ; let rn_section = SectionR x op' expr'
+              ds_section = genHsApps rightSectionName [op',expr']
+        ; return ( mkExpandedExpr rn_section ds_section
+                 , fvs_op `plusFV` fvs_expr) }
 
 rnSection section@(SectionL x expr op)
   = do  { (expr', fvs_expr) <- rnLExpr expr
         ; (op', fvs_op)     <- rnLExpr op
         ; checkSectionPrec InfixL section op' expr'
-        ; return (SectionL x expr' op', fvs_op `plusFV` fvs_expr) }
+        ; postfix_ops <- xoptM LangExt.PostfixOperators
+                        -- Note [Left sections]
+        ; let rn_section = SectionL x expr' op'
+              ds_section
+                | postfix_ops = HsApp noExtField op' expr'
+                | otherwise   = genHsApps leftSectionName [op',expr']
+        ; return ( mkExpandedExpr rn_section ds_section
+                 , fvs_op `plusFV` fvs_expr) }
 
 rnSection other = pprPanic "rnSection" (ppr other)
 
@@ -2235,21 +2253,35 @@ getMonadFailOp ctxt
 --
 -- See Note [Rebindable syntax and HsExpansion]
 rebindIf
-  :: Located Name  -- 'Name' for the 'ifThenElse' function we will rebind to
+  :: Name          -- 'Name' for the 'ifThenElse' function we will rebind to
   -> LHsExpr GhcRn -- renamed condition
   -> LHsExpr GhcRn -- renamed true branch
   -> LHsExpr GhcRn -- renamed false branch
   -> HsExpr GhcRn  -- rebound if expression
 rebindIf ifteName p b1 b2 =
   let ifteOrig = HsIf noExtField p b1 b2
-      ifteFun  = L generatedSrcSpan (HsVar noExtField ifteName)
-                 -- ifThenElse var
-      ifteApp  = mkHsAppsWith (\_ _ e -> L generatedSrcSpan e)
-                              ifteFun
-                              [p, b1, b2]
+      ifteApp  = genHsApps ifteName [p, b1, b2]
                  -- desugared_if_expr =
                  --   ifThenElse desugared_predicate
                  --              desugared_true_branch
                  --              desugared_false_branch
-  in mkExpanded XExpr ifteOrig (unLoc ifteApp)
+  in mkExpandedExpr ifteOrig ifteApp
      -- (source_if_expr, desugared_if_expr)
+
+
+genHsApps :: Name -> [LHsExpr GhcRn] -> HsExpr GhcRn
+genHsApps fun args = foldl go (genHsVar fun) args
+  where
+    go :: HsExpr GhcRn -> LHsExpr GhcRn -> HsExpr GhcRn
+    go fun arg = HsApp noExtField (wrapGenSpan fun) arg
+
+genLHsVar :: Name -> LHsExpr GhcRn
+genLHsVar nm = wrapGenSpan $ genHsVar nm
+
+genHsVar :: Name -> HsExpr GhcRn
+genHsVar nm = HsVar noExtField $ wrapGenSpan nm
+
+wrapGenSpan :: a -> Located a
+-- Wrap something in a "GeneratedSrcSpan"
+-- See Note [Rebindable syntax and HsExpansion]
+wrapGenSpan x = L generatedSrcSpan x

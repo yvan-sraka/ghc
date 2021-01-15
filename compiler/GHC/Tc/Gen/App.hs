@@ -17,7 +17,6 @@
 module GHC.Tc.Gen.App
        ( tcApp
        , tcInferSigma
-       , tcValArg
        , tcExprPrag ) where
 
 import {-# SOURCE #-} GHC.Tc.Gen.Expr( tcCheckPolyExprNC )
@@ -137,13 +136,13 @@ tcInferSigma :: Bool -> LHsExpr GhcRn -> TcM TcSigmaType
 -- True  <=> instantiate -- return a rho-type
 -- False <=> don't instantiate -- return a sigma-type
 tcInferSigma inst (L loc rn_expr)
-  | (rn_fun, rn_args, _) <- splitHsApps rn_expr
+  | (rn_fun, rn_args) <- splitHsApps rn_expr
   = addExprCtxt rn_expr $
     setSrcSpan loc      $
     do { do_ql <- wantQuickLook rn_fun
        ; (tc_fun, fun_sigma) <- tcInferAppHead rn_fun rn_args Nothing
        ; (_delta, inst_args, app_res_sigma) <- tcInstFun do_ql inst rn_fun fun_sigma rn_args
-       ; _tc_args <- tcValArgs do_ql tc_fun inst_args
+       ; _tc_args <- tcValArgs do_ql rn_fun inst_args
        ; return app_res_sigma }
 
 {- *********************************************************************
@@ -167,7 +166,6 @@ app :: head
 
 head ::= f             -- HsVar:    variables
       |  fld           -- HsRecFld: record field selectors
-      |  #lbl          -- HsOverLabel: overloaded label
       |  (expr :: ty)  -- ExprWithTySig: expr with user type sig
       |  other_expr    -- Other expressions
 
@@ -265,7 +263,7 @@ Some cases that /won't/ work:
 tcApp :: HsExpr GhcRn -> ExpRhoType -> TcM (HsExpr GhcTc)
 -- See Note [tcApp: typechecking applications]
 tcApp rn_expr exp_res_ty
-  | (rn_fun, rn_args, rebuild) <- splitHsApps rn_expr
+  | (rn_fun, rn_args) <- splitHsApps rn_expr
   = do { (tc_fun, fun_sigma) <- tcInferAppHead rn_fun rn_args
                                     (checkingExpType_maybe exp_res_ty)
 
@@ -288,7 +286,7 @@ tcApp rn_expr exp_res_ty
                                , text "rn_expr:"     <+> ppr rn_expr ]) }
 
        -- Typecheck the value arguments
-       ; tc_args <- tcValArgs do_ql tc_fun inst_args
+       ; tc_args <- tcValArgs do_ql rn_fun inst_args
 
        -- Zonk the result type, to ensure that we substitute out
        -- any filled-in instantiation variable before calling tcWrapResultMono
@@ -305,7 +303,7 @@ tcApp rn_expr exp_res_ty
          else
 
     do { -- Reconstruct
-       ; let tc_expr = rebuild tc_fun tc_args
+       ; let tc_expr = rebuildHsApps tc_fun tc_args
 
        -- Wrap the result
        ; addFunResCtxt tc_fun tc_args app_res_rho exp_res_ty $
@@ -344,7 +342,7 @@ zonkArg arg = return arg
 
 ----------------
 tcValArgs :: Bool                    -- Quick-look on?
-          -> HsExpr GhcTc            -- The function (for error messages)
+          -> HsExpr GhcRn            -- The function (for error messages)
           -> [HsExprArg 'TcpInst]    -- Actual argument
           -> TcM [HsExprArg 'TcpTc]  -- Resulting argument
 tcValArgs do_ql fun args
@@ -356,9 +354,8 @@ tcValArgs do_ql fun args
                          ; return (arg' : args') }
 
     tc_arg :: Int -> HsExprArg 'TcpInst -> TcM (Int, HsExprArg 'TcpTc)
-    tc_arg n (EPar l)              = return (n,   EPar l)
     tc_arg n (EPrag l p)           = return (n,   EPrag l (tcExprPrag p))
-    tc_arg n (EWrap wrap)          = return (n,   EWrap wrap)
+    tc_arg n (EWrap w)             = return (n,   EWrap w)
     tc_arg n (ETypeArg l hs_ty ty) = return (n+1, ETypeArg l hs_ty ty)
 
     tc_arg n eva@(EValArg { eva_arg = arg, eva_arg_ty = Scaled mult arg_ty })
@@ -382,7 +379,7 @@ tcValArgs do_ql fun args
                                , text "arg:" <+> ppr arg ]
                         ; tcEValArg arg arg_ty }
 
-           ; return (n+1, eva { eva_arg = ValArg arg'
+           ; return (n+1, eva { eva_arg    = ValArg arg'
                               , eva_arg_ty = Scaled mult arg_ty }) }
 
 tcEValArg :: EValArg 'TcpInst -> TcSigmaType -> TcM (LHsExpr GhcTc)
@@ -391,14 +388,15 @@ tcEValArg (ValArg arg) exp_arg_sigma
   = tcCheckPolyExprNC arg exp_arg_sigma
 
 tcEValArg (ValArgQL { va_expr = L loc _, va_fun = fun, va_args = args
-                    , va_ty = app_res_rho, va_rebuild = rebuild }) exp_arg_sigma
+                    , va_ty = app_res_rho }) exp_arg_sigma
   = setSrcSpan loc $
     do { traceTc "tcEValArg {" (vcat [ ppr fun <+> ppr args ])
        ; tc_args <- tcValArgs True fun args
        ; co <- unifyType Nothing app_res_rho exp_arg_sigma
        ; traceTc "tcEValArg }" empty
-       ; return (L loc $ mkHsWrapCo co $ rebuild fun tc_args) }
+       ; return (L loc $ mkHsWrapCo co $ rebuildHsApps fun tc_args) }
 
+{-
 ----------------
 tcValArg :: HsExpr GhcRn          -- The function (for error messages)
          -> LHsExpr GhcRn         -- Actual argument
@@ -414,7 +412,7 @@ tcValArg fun arg (Scaled mult arg_ty) arg_no
                , text "arg type:" <+> ppr arg_ty
                , text "arg:" <+> ppr arg ]
         ; tcCheckPolyExprNC arg arg_ty }
-
+-}
 
 {- *********************************************************************
 *                                                                      *
@@ -498,6 +496,7 @@ tcInstFun do_ql inst_final rn_fun fun_sigma rn_args
     --      ('go' dealt with that case)
 
     -- Rule IALL from Fig 4 of the QL paper
+    -- c.f. GHC.Tc.Utils.Instantiate.topInstantiate
     go1 delta acc so_far fun_ty args
       | (tvs,   body1) <- tcSplitSomeForAllTyVars (inst_fun args) fun_ty
       , (theta, body2) <- tcSplitPhiTy body1
@@ -516,8 +515,8 @@ tcInstFun do_ql inst_final rn_fun fun_sigma rn_args
        = do { traceTc "tcInstFun:ret" (ppr fun_ty)
             ; return (delta, reverse acc, fun_ty) }
 
-    go1 delta acc so_far fun_ty (EPar sp : args)
-      = go1 delta (EPar sp : acc) so_far fun_ty args
+    go1 delta acc so_far fun_ty (EWrap w : args)
+      = go1 delta (EWrap w : acc) so_far fun_ty args
 
     go1 delta acc so_far fun_ty (EPrag sp prag : args)
       = go1 delta (EPrag sp prag : acc) so_far fun_ty args
@@ -788,7 +787,7 @@ quickLookArg1 :: Bool -> Delta -> LHsExpr GhcRn -> TcSigmaType
               -> TcM (Delta, EValArg 'TcpInst)
 quickLookArg1 guarded delta larg@(L loc arg) arg_ty
   = setSrcSpan loc $
-    do { let (rn_fun,rn_args,rebuild) = splitHsApps arg
+    do { let (rn_fun,rn_args) = splitHsApps arg
        ; mb_fun_ty <- tcInferAppHead_maybe rn_fun rn_args (Just arg_ty)
        ; traceTc "quickLookArg 1" $
          vcat [ text "arg:" <+> ppr arg
@@ -824,8 +823,7 @@ quickLookArg1 guarded delta larg@(L loc arg) arg_ty
 
        ; let ql_arg = ValArgQL { va_expr = larg, va_fun = fun'
                                , va_args = inst_args
-                               , va_ty = app_res_rho
-                               , va_rebuild = rebuild }
+                               , va_ty = app_res_rho }
        ; return (delta', ql_arg) } } } }
 
 skipQuickLook :: Delta -> LHsExpr GhcRn -> TcM (Delta, EValArg 'TcpInst)
@@ -1014,7 +1012,7 @@ findNoQuantVars fun_ty args
 
     go bvs fun_ty [] =  tyCoVarsOfType fun_ty `disjointVarSet` bvs
 
-    go bvs fun_ty (EPar {}  : args) = go bvs fun_ty args
+    go bvs fun_ty (EWrap {} : args) = go bvs fun_ty args
     go bvs fun_ty (EPrag {} : args) = go bvs fun_ty args
 
     go bvs fun_ty args@(ETypeArg {} : rest_args)
@@ -1102,7 +1100,7 @@ tcTagToEnum expr fun args app_res_ty res_ty
          check_enumeration ty' rep_tc
        ; let rep_ty  = mkTyConApp rep_tc rep_args
              fun'    = mkHsWrap (WpTyApp rep_ty) fun
-             expr'   = rebuildPrefixApps fun' val_args
+             expr'   = rebuildHsApps fun' val_args
              df_wrap = mkWpCastR (mkTcSymCo coi)
        ; return (mkHsWrap df_wrap expr') }}}}}
 
@@ -1110,7 +1108,7 @@ tcTagToEnum expr fun args app_res_ty res_ty
     val_args = dropWhile (not . isHsValArg) args
 
     vanilla_result
-      = do { let expr' = rebuildPrefixApps fun args
+      = do { let expr' = rebuildHsApps fun args
            ; tcWrapResultMono expr expr' app_res_ty res_ty }
 
     check_enumeration ty' tc

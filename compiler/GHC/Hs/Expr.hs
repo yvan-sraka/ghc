@@ -266,12 +266,8 @@ data HsExpr p
               -- The renamer renames record-field selectors to HsRecFld
               -- The typechecker preserves HsRecFld
 
-  | HsOverLabel (XOverLabel p)
-                (Maybe (IdP p)) FastString
+  | HsOverLabel (XOverLabel p) FastString
      -- ^ Overloaded label (Note [Overloaded labels] in GHC.OverloadedLabels)
-     --   @Just id@ means @RebindableSyntax@ is in use, and gives the id of the
-     --   in-scope 'fromLabel'.
-     --   NB: Not in use after typechecking
 
   | HsIPVar   (XIPVar p)
               HsIPName   -- ^ Implicit parameter (not in use after typechecking)
@@ -428,11 +424,8 @@ data HsExpr p
 
   -- For details on above see note [Api annotations] in GHC.Parser.Annotation
   -- See Note [Empty lists]
-  | ExplicitList
-                (XExplicitList p)  -- Gives type of components of list
-                (Maybe (SyntaxExpr p))
-                                   -- For OverloadedLists, the fromListN witness
-                [LHsExpr p]
+  | ExplicitList (XExplicitList p)  -- Gives type of components of list
+                 [LHsExpr p]
 
   -- | Record construction
   --
@@ -697,7 +690,6 @@ data XXExprGhcTc
 {-
 Note [Rebindable syntax and HsExpansion]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 We implement rebindable syntax (RS) support by performing a desugaring
 in the renamer. We transform GhcPs expressions affected by RS into the
 appropriate desugared form, but **annotated with the original expression**.
@@ -777,15 +769,17 @@ source code), we set 'tcl_in_gen_code' back to False, indicating that we
 "emerged from the generated code tunnel", and that the expressions we will be
 processing are relevant to report in context lines again.
 
-You might wonder why we store a RealSrcSpan in addition to a Bool in
-the TcLclEnv: could we not store a Maybe RealSrcSpan? The problem is
-that we still generate constraints when processing generated code,
-and a CtLoc must contain a RealSrcSpan -- otherwise, error messages
-might appear without source locations. So we keep the RealSrcSpan of
-the last location spotted that wasn't generated; it's as good as
-we're going to get in generated code. Once we get to sub-trees that
-are not generated, then we update the RealSrcSpan appropriately, and
-set the tcl_in_gen_code Bool to False.
+You might wonder why TcLclEnv has both
+   tcl_loc         :: RealSrcSpan
+   tcl_in_gen_code :: Bool
+Could we not store a Maybe RealSrcSpan? The problem is that we still
+generate constraints when processing generated code, and a CtLoc must
+contain a RealSrcSpan -- otherwise, error messages might appear
+without source locations. So tcl_loc keeps the RealSrcSpan of the last
+location spotted that wasn't generated; it's as good as we're going to
+get in generated code. Once we get to sub-trees that are not
+generated, then we update the RealSrcSpan appropriately, and set the
+tcl_in_gen_code Bool to False.
 
 ---
 
@@ -804,7 +798,7 @@ A general recipe to follow this approach for new constructs could go as follows:
  - At typechecking-time:
     - remove any logic that was previously dealing with your rebindable
       construct, typically involving [tc]SyntaxOp, SyntaxExpr and friends.
-    - the XExpr (HsExpanded ... ...) case in tcExpr already makes sure that we
+    - the XExpr (HsExpanded ... ...) case in tcExpr already makes sure that weHs
       typecheck the desugared expression while reporting the original one in
       errors
 
@@ -820,14 +814,11 @@ data HsExpansion a b
 --   expressions.
 --
 --   See Note [Rebindable Syntax and HsExpansion] above for more details.
-mkExpanded
-  :: (HsExpansion a b -> b) -- ^ XExpr, XCmd, ...
-  -> a                      -- ^ source expression ('GhcPs')
-  -> b                      -- ^ "desugared" expression
-                            --   ('GhcRn')
-  -> b                      -- ^ suitably wrapped
-                            --   'HsExpansion'
-mkExpanded xwrap a b = xwrap (HsExpanded a b)
+mkExpandedExpr
+  :: HsExpr GhcRn           -- ^ source expression
+  -> HsExpr GhcRn           -- ^ "desugared" expression
+  -> HsExpr GhcRn           -- ^ suitably wrapped 'HsExpansion'
+mkExpandedExpr a b = XExpr (HsExpanded a b)
 
 -- | Just print the original expression (the @a@).
 instance (Outputable a, Outputable b) => Outputable (HsExpansion a b) where
@@ -1065,7 +1056,7 @@ ppr_expr (HsUnboundVar _ uv) = pprPrefixOcc uv
 ppr_expr (HsConLikeOut _ c)  = pprPrefixOcc c
 ppr_expr (HsRecFld _ f)      = pprPrefixOcc f
 ppr_expr (HsIPVar _ v)       = ppr v
-ppr_expr (HsOverLabel _ _ l) = char '#' <> ppr l
+ppr_expr (HsOverLabel _ l)   = char '#' <> ppr l
 ppr_expr (HsLit _ lit)       = ppr lit
 ppr_expr (HsOverLit _ lit)   = ppr lit
 ppr_expr (HsPar _ e)         = parens (ppr_lexpr e)
@@ -1184,7 +1175,7 @@ ppr_expr (HsLet _ (L _ binds) expr)
 
 ppr_expr (HsDo _ do_or_list_comp (L _ stmts)) = pprDo do_or_list_comp stmts
 
-ppr_expr (ExplicitList _ _ exprs)
+ppr_expr (ExplicitList _ exprs)
   = brackets (pprDeeperList fsep (punctuate comma (map ppr_lexpr exprs)))
 
 ppr_expr (RecordCon { rcon_con_name = con_id, rcon_flds = rbinds })

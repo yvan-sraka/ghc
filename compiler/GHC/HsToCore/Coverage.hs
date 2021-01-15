@@ -583,15 +583,8 @@ addTickHsExpr (HsDo srcloc cxt (L l stmts))
         forQual = case cxt of
                     ListComp -> Just $ BinBox QualBinBox
                     _        -> Nothing
-addTickHsExpr (ExplicitList ty wit es) =
-        liftM3 ExplicitList
-                (return ty)
-                (addTickWit wit)
-                (mapM (addTickLHsExpr) es)
-             where addTickWit Nothing = return Nothing
-                   addTickWit (Just fln)
-                     = do fln' <- addTickSyntaxExpr hpcSrcSpan fln
-                          return (Just fln')
+addTickHsExpr (ExplicitList ty es)
+  = liftM2 ExplicitList (return ty) (mapM (addTickLHsExpr) es)
 
 addTickHsExpr (HsStatic fvs e) = HsStatic fvs <$> addTickLHsExpr e
 

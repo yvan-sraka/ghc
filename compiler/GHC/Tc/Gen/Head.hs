@@ -16,10 +16,10 @@
 -}
 
 module GHC.Tc.Gen.Head
-       ( HsExprArg(..), EValArg(..), TcPass(..), Rebuilder
-       , splitHsApps
+       ( HsExprArg(..), EValArg(..), TcPass(..)
+       , splitHsApps, rebuildHsApps
        , addArgWrap, eValArgExpr, isHsValArg, setSrcSpanFromArgs
-       , countLeadingValArgs, isVisibleArg, pprHsExprArgTc, rebuildPrefixApps
+       , countLeadingValArgs, isVisibleArg, pprHsExprArgTc
 
        , tcInferAppHead, tcInferAppHead_maybe
        , tcInferId, tcCheckId
@@ -43,18 +43,17 @@ import GHC.Tc.Utils.Instantiate
 import GHC.Tc.Instance.Family ( tcGetFamInstEnvs, tcLookupDataFamInst )
 import GHC.Core.FamInstEnv    ( FamInstEnvs )
 import GHC.Core.UsageEnv      ( unitUE )
-import GHC.Core.TyCo.Subst    (substTyWithInScope)
 import GHC.Rename.Env         ( addUsedGRE )
 import GHC.Rename.Utils       ( addNameClashErrRn, unknownSubordinateErr )
 import GHC.Tc.Solver          ( InferMode(..), simplifyInfer )
 import GHC.Tc.Utils.Env
+import GHC.Tc.Utils.Zonk      ( hsLitType )
 import GHC.Tc.Utils.TcMType
 import GHC.Tc.Types.Origin
 import GHC.Tc.Utils.TcType as TcType
 import GHC.Hs
 import GHC.Types.Id
 import GHC.Types.Id.Info
-import GHC.Types.Var.Env  ( mkInScopeSet )
 import GHC.Core.ConLike
 import GHC.Core.DataCon
 import GHC.Types.Name
@@ -63,7 +62,7 @@ import GHC.Core.TyCon
 import GHC.Core.TyCo.Rep
 import GHC.Core.Type
 import GHC.Tc.Types.Evidence
-import GHC.Builtin.Types( multiplicityTy, typeSymbolKind )
+import GHC.Builtin.Types( multiplicityTy )
 import GHC.Builtin.Names
 import GHC.Builtin.Names.TH( liftStringName, liftName )
 import GHC.Driver.Session
@@ -72,7 +71,6 @@ import GHC.Utils.Misc
 import GHC.Data.Maybe
 import GHC.Utils.Outputable as Outputable
 import GHC.Utils.Panic
-import GHC.Data.FastString( FastString )
 import Control.Monad
 
 import Data.Function
@@ -169,9 +167,11 @@ data HsExprArg (p :: TcPass)
   | EPrag    SrcSpan
              (HsPragE (GhcPass (XPass p)))
 
-  | EPar     SrcSpan         -- Of the nested expr
+  | EWrap    EWrap
 
-  | EWrap    !(XEWrap p)     -- Wrapper, after instantiation
+data EWrap = EPar    SrcSpan
+           | EExpand (HsExpr GhcRn)
+           | EHsWrap HsWrapper
 
 data EValArg (p :: TcPass) where  -- See Note [EValArg]
   ValArg   :: LHsExpr (GhcPass (XPass p))
@@ -180,12 +180,8 @@ data EValArg (p :: TcPass) where  -- See Note [EValArg]
                                                 -- For location and error msgs
               , va_fun  :: HsExpr GhcTc         -- Function, typechecked
               , va_args :: [HsExprArg 'TcpInst] -- Args, instantiated
-              , va_ty   :: TcRhoType            -- Result type
-              , va_rebuild :: Rebuilder }       -- How to reassemble
+              , va_ty   :: TcRhoType }          -- Result type
            -> EValArg 'TcpInst  -- Only exists in TcpInst phase
-
-type Rebuilder = HsExpr GhcTc -> [HsExprArg 'TcpTc]-> HsExpr GhcTc
--- See Note [splitHsApps and Rebuilder]
 
 type family XPass p where
   XPass 'TcpRn   = 'Renamed
@@ -199,10 +195,6 @@ type family XETAType p where  -- Type arguments
 type family XEVAType p where  -- Value arguments
   XEVAType 'TcpRn = NoExtField
   XEVAType _      = Scaled Type
-
-type family XEWrap p where
-  XEWrap 'TcpRn = NoExtCon
-  XEWrap _      = HsWrapper
 
 mkEValArg :: SrcSpan -> LHsExpr GhcRn -> HsExprArg 'TcpRn
 mkEValArg l e = EValArg { eva_loc = l, eva_arg = ValArg e
@@ -219,61 +211,51 @@ eValArgExpr (ValArgQL { va_expr = e }) = e
 addArgWrap :: HsWrapper -> [HsExprArg 'TcpInst] -> [HsExprArg 'TcpInst]
 addArgWrap wrap args
  | isIdHsWrapper wrap = args
- | otherwise          = EWrap wrap : args
+ | otherwise          = EWrap (EHsWrap wrap) : args
 
-splitHsApps :: HsExpr GhcRn -> (HsExpr GhcRn, [HsExprArg 'TcpRn], Rebuilder)
+splitHsApps :: HsExpr GhcRn -> (HsExpr GhcRn, [HsExprArg 'TcpRn])
 -- See Note [splitHsApps and Rebuilder]
 splitHsApps e
   = go e []
   where
-    go (HsPar _     (L l fun))       args = go fun (EPar       l       : args)
+    go (HsPar _     (L l fun))       args = go fun (EWrap (EPar l)     : args)
     go (HsPragE _ p (L l fun))       args = go fun (EPrag      l p     : args)
     go (HsAppType _ (L l fun) hs_ty) args = go fun (mkETypeArg l hs_ty : args)
     go (HsApp _     (L l fun) arg)   args = go fun (mkEValArg  l arg   : args)
+    go (XExpr (HsExpanded a fun))    args = go fun (EWrap (EExpand a)  : args)
 
-    go (OpApp fix arg1 (L l op) arg2) args
-      = (op, mkEValArg l arg1 : mkEValArg l arg2 : args, rebuild_infix fix)
+    go e@(OpApp _ arg1 (L l op) arg2) args
+      = (op, mkEValArg l arg1 : mkEValArg l arg2 : EWrap (EExpand e) : args)
 
-    go e args = (e, args, rebuildPrefixApps)
+    go e args = (e, args)
 
-    rebuild_infix :: Fixity -> Rebuilder
-    rebuild_infix fix fun args
-      = go fun args
-      where
-        go fun (EValArg { eva_arg = ValArg arg1, eva_loc = l } :
-                EValArg { eva_arg = ValArg arg2 } : args)
-                                   = rebuildPrefixApps (OpApp fix arg1 (L l fun) arg2) args
-        go fun (EWrap wrap : args) = go (mkHsWrap wrap fun) args
-        go fun args                = rebuildPrefixApps fun args
-           -- This last case fails to rebuild a OpApp, which is sad.
-           -- It can happen if we have (e1 `op` e2),
-           -- and op :: Int -> forall a. a -> Int, and e2 :: Bool
-           -- Then we'll get   [ e1, @Bool, e2 ]
-           -- Could be fixed with WpFun, but extra complexity.
-
-rebuildPrefixApps :: Rebuilder
-rebuildPrefixApps fun args
+rebuildHsApps :: HsExpr GhcTc -> [HsExprArg 'TcpTc]-> HsExpr GhcTc
+rebuildHsApps fun args
   = go fun args
   where
     go fun [] = fun
-    go fun (EWrap wrap : args)               = go (mkHsWrap wrap fun) args
     go fun (EValArg { eva_arg = ValArg arg
                     , eva_loc = l } : args)  = go (HsApp noExtField (L l fun) arg) args
     go fun (ETypeArg { eva_hs_ty = hs_ty
                      , eva_ty  = ty
                      , eva_loc = l } : args) = go (HsAppType ty (L l fun) hs_ty) args
-    go fun (EPar l : args)                   = go (HsPar noExtField (L l fun)) args
     go fun (EPrag l p : args)                = go (HsPragE noExtField p (L l fun)) args
+    go fun (EWrap wrap : args)               = go (go_wrap wrap fun) args
+
+    go_wrap (EPar l)       e = HsPar noExtField (L l e)
+    go_wrap (EExpand orig) e = XExpr (ExpansionExpr (HsExpanded orig e))
+    go_wrap (EHsWrap wrap) e = mkHsWrap wrap e
 
 isHsValArg :: HsExprArg id -> Bool
 isHsValArg (EValArg {}) = True
 isHsValArg _            = False
 
 countLeadingValArgs :: [HsExprArg id] -> Int
-countLeadingValArgs (EValArg {} : args) = 1 + countLeadingValArgs args
-countLeadingValArgs (EPar {}    : args) = countLeadingValArgs args
-countLeadingValArgs (EPrag {}   : args) = countLeadingValArgs args
-countLeadingValArgs _                   = 0
+countLeadingValArgs []                   = 0
+countLeadingValArgs (EValArg {}  : args) = 1 + countLeadingValArgs args
+countLeadingValArgs (EWrap {}    : args) = countLeadingValArgs args
+countLeadingValArgs (EPrag {}    : args) = countLeadingValArgs args
+countLeadingValArgs (ETypeArg {} : _)    = 0
 
 isValArg :: HsExprArg id -> Bool
 isValArg (EValArg {}) = True
@@ -287,24 +269,24 @@ isVisibleArg _             = False
 setSrcSpanFromArgs :: [HsExprArg 'TcpRn] -> TcM a -> TcM a
 setSrcSpanFromArgs [] thing_inside
   = thing_inside
-setSrcSpanFromArgs (arg:_) thing_inside
-  = setSrcSpan (argFunLoc arg) thing_inside
-
-argFunLoc :: HsExprArg 'TcpRn -> SrcSpan
-argFunLoc (EValArg { eva_loc = l }) = l
-argFunLoc (ETypeArg { eva_loc = l}) = l
-argFunLoc (EPrag l _)               = l
-argFunLoc (EPar l)                  = l
+setSrcSpanFromArgs (arg:args) thing_inside
+  = case arg of
+      EValArg { eva_loc = l } -> setSrcSpan l thing_inside
+      ETypeArg { eva_loc = l} -> setSrcSpan l thing_inside
+      EPrag l _               -> setSrcSpan l thing_inside
+      EWrap (EPar l)          -> setSrcSpan l thing_inside
+      EWrap _                 -> setSrcSpanFromArgs args thing_inside
 
 instance OutputableBndrId (XPass p) => Outputable (HsExprArg p) where
   ppr (EValArg { eva_arg = arg })      = text "EValArg" <+> ppr arg
   ppr (EPrag _ p)                      = text "EPrag" <+> ppr p
   ppr (ETypeArg { eva_hs_ty = hs_ty }) = char '@' <> ppr hs_ty
-  ppr (EPar _)                         = text "EPar"
-  ppr (EWrap _)                        = text "EWrap"
-  -- ToDo: to print the wrapper properly we'll need to work harder
-  -- "Work harder" = replicate the ghcPass approach, but I didn't
-  -- think it was worth the effort to do so.
+  ppr (EWrap wrap)                     = ppr wrap
+
+instance Outputable EWrap where
+  ppr (EPar _)       = text "EPar"
+  ppr (EHsWrap w)    = text "EHsWrap" <+> ppr w
+  ppr (EExpand orig) = text "EExpand" <+> ppr orig
 
 instance OutputableBndrId (XPass p) => Outputable (EValArg p) where
   ppr (ValArg e) = ppr e
@@ -369,7 +351,7 @@ tcInferAppHead_maybe fun args mb_res_ty
       HsRecFld _ f              -> Just <$> tcInferRecSelId f args mb_res_ty
       ExprWithTySig _ e hs_ty   -> add_head_ctxt fun args $
                                    Just <$> tcExprWithSig e hs_ty
-      HsOverLabel _ mb_fl lbl   -> Just <$> tcInferOverLabel mb_fl lbl
+      HsOverLit _ lit           -> Just <$> tcInferOverLit lit
       _                         -> return Nothing
 
 add_head_ctxt :: HsExpr GhcRn -> [HsExprArg 'TcpRn] -> TcM a -> TcM a
@@ -718,6 +700,44 @@ CLong, as it should.
 
 {- *********************************************************************
 *                                                                      *
+                 Overloaded literals
+*                                                                      *
+********************************************************************* -}
+
+tcInferOverLit :: HsOverLit GhcRn -> TcM (HsExpr GhcTc, TcSigmaType)
+tcInferOverLit lit@(OverLit { ol_val = val
+                            , ol_witness = HsVar _ (L loc from_name)
+                            , ol_ext = rebindable })
+  = -- Desugar "3" to (fromInteger (3 :: Integer)
+    -- where fromInteger is gotten by looking up from_name, and
+    -- the (3 :: Integer) is returned by mkOverLit
+    do { from_id <- tcLookupId from_name
+       ; (wrap1, from_ty) <- topInstantiate orig (idType from_id)
+
+       ; (wrap2, sarg_ty, res_ty) <- matchActualFunTySigma herald mb_doc
+                                                           (1, []) from_ty
+       ; hs_lit <- mkOverLit val
+       ; co <- unifyType mb_doc (hsLitType hs_lit) (scaledThing sarg_ty)
+
+       ; let lit_expr = L loc $ mkHsWrapCo co $
+                        HsLit noExtField hs_lit
+             from_expr = mkHsWrap (wrap2 <.> wrap1) $
+                         HsVar noExtField (L loc from_id)
+             lit' = lit { ol_witness = HsApp noExtField (L loc from_expr) lit_expr
+                        , ol_ext = OverLitTc rebindable res_ty }
+       ; return (HsOverLit noExtField lit', res_ty) }
+  where
+    orig   = LiteralOrigin lit
+    mb_doc = Just (ppr from_name)
+    herald = sep [ text "The function" <+> quotes (ppr from_name)
+                 , text "is applied to"]
+
+tcInferOverLit lit
+  = pprPanic "tcInferOverLit" (ppr lit)
+
+
+{- *********************************************************************
+*                                                                      *
                  Overloaded labels
 *                                                                      *
 ********************************************************************* -}
@@ -759,12 +779,17 @@ it should be equal to Symbol.  So unify with Symbol and cast.
 
 -}
 
+{-
 tcInferOverLabel :: Maybe Name -> FastString -> TcM (HsExpr GhcTc, TcSigmaType)
 tcInferOverLabel mb_fromLabel lbl
   = do { -- See Note [Type-checking overloaded labels]
          loc <- getSrcSpanM
        ; from_label_id <- tcLookupId (mb_fromLabel `orElse` fromLabelClassOpName)
-       ; (wrap, from_label_ty) <- instantiateInferred fun_orig (idType from_label_id)
+
+       -- Instantiate the /inferred/ (not invisible!) binders to get down to
+       --     forall (a::Symbol). blah
+       -- See Note [Type-checking overloaded labels]
+       ; (wrap, from_label_ty) <- topInstantiateInferred fun_orig (idType from_label_id)
        ; let from_label_expr = mkHsWrap wrap $
                                HsVar noExtField (L loc from_label_id)
 
@@ -781,19 +806,16 @@ tcInferOverLabel mb_fromLabel lbl
                           inst_ty    = substTyWithInScope in_scope [tv] [str_lit_ty] body_ty
                           app_expr   = mkHsWrap (mkWpTyApps [str_lit_ty]) from_label_expr
                     ; return ( app_expr, inst_ty ) }
-            _ -> failWithTc (text "Bad overloaded label type" <+> ppr (idType from_label_id))
+            _ -> failWithTc (bad_msg from_label_id)
     }
   where
     fun_orig = exprCtOrigin (HsOverLabel noExtField mb_fromLabel lbl)
+    bad_msg from_label_id
+      = hang (text "Invalid overloaded label" <+> quotes (char '#' <> ppr lbl))
+           2 (vcat [ text "fromLabel should have type 'forall (a::Symbol). ...', but"
+                   , text "fromLabel ::" <+> ppr (idType from_label_id) ])
 
-instantiateInferred :: CtOrigin -> TcSigmaType -> TcM (HsWrapper, TcSigmaType)
--- Instantiate just the /inferred/ quantifiers
-instantiateInferred fun_orig fun_sigma
-   | (tvs,  body1) <- tcSplitSomeForAllTyVars (== Inferred) fun_sigma
-   , (theta, body2) <- tcSplitPhiTy body1
-   = do { (_inst_tvs, wrap, fun_rho) <- instantiateSigma fun_orig tvs theta body2
-        ; return (wrap, fun_rho) }
-
+-}
 
 {- *********************************************************************
 *                                                                      *

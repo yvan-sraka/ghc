@@ -80,7 +80,7 @@ import GHC.Data.FastString
 import Control.Monad
 import GHC.Core.Class(classTyCon)
 import GHC.Types.Unique.Set ( UniqSet, mkUniqSet, elementOfUniqSet, nonDetEltsUniqSet )
-import qualified GHC.LanguageExtensions as LangExt
+-- import qualified GHC.LanguageExtensions as LangExt
 
 import Data.Function
 import Data.List (partition, sortBy, groupBy, intersect)
@@ -180,7 +180,7 @@ tcExpr :: HsExpr GhcRn -> ExpRhoType -> TcM (HsExpr GhcTc)
 -- Use tcApp to typecheck appplications, which are treated specially
 -- by Quick Look.  Specifically:
 --   - HsApp:       value applications
---   - HsTypeApp:   type applications
+--   - HsAppType:   type applications
 --   - HsOverLabel: overloaded labels
 --   - HsRecFld:    overloaded record fields
 --   - HsVar:       lone variables, to ensure that they can get an
@@ -188,12 +188,19 @@ tcExpr :: HsExpr GhcRn -> ExpRhoType -> TcM (HsExpr GhcTc)
 --                  driven by res_ty (in checking mode)).
 --   - ExprWithTySig: (e :: type)
 -- See Note [Application chains and heads] in GHC.Tc.Gen.App
-tcExpr e@(HsVar {})         res_ty = tcApp e res_ty
-tcExpr e@(HsApp {})         res_ty = tcApp e res_ty
-tcExpr e@(HsAppType {})     res_ty = tcApp e res_ty
-tcExpr e@(ExprWithTySig {}) res_ty = tcApp e res_ty
-tcExpr e@(HsRecFld {})      res_ty = tcApp e res_ty
-tcExpr e@(HsOverLabel {})   res_ty = tcApp e res_ty
+tcExpr e@(HsVar {})              res_ty = tcApp e res_ty
+tcExpr e@(HsApp {})              res_ty = tcApp e res_ty
+tcExpr e@(HsAppType {})          res_ty = tcApp e res_ty
+tcExpr e@(ExprWithTySig {})      res_ty = tcApp e res_ty
+tcExpr e@(HsRecFld {})           res_ty = tcApp e res_ty
+tcExpr e@(XExpr (HsExpanded {})) res_ty = tcApp e res_ty
+
+tcExpr e@(HsOverLit _ lit)  res_ty = do { mb_res <- tcShortCutLit lit res_ty
+                                        ; case mb_res of
+                                             Just lit' -> return (HsOverLit noExtField lit')
+                                             Nothing   -> tcApp e res_ty }
+
+
 
 -- Typecheck an occurrence of an unbound Id
 --
@@ -217,10 +224,6 @@ tcExpr (HsPar x expr) res_ty
 tcExpr (HsPragE x prag expr) res_ty
   = do { expr' <- tcMonoExpr expr res_ty
        ; return (HsPragE x (tcExprPrag prag) expr') }
-
-tcExpr (HsOverLit x lit) res_ty
-  = do  { lit' <- newOverloadedLit lit res_ty
-        ; return (HsOverLit x lit') }
 
 tcExpr (NegApp x expr neg_expr) res_ty
   = do  { (expr', neg_expr')
@@ -296,6 +299,7 @@ tcExpr expr@(OpApp {}) res_ty
 -- Right sections, equivalent to \ x -> x `op` expr, or
 --      \ x -> op x expr
 
+{-
 tcExpr expr@(SectionR x op arg2) res_ty
   = do { (op', op_ty) <- tcInferRhoNC op
        ; (wrap_fun, [Scaled arg1_mult arg1_ty, arg2_ty], op_res_ty)
@@ -330,6 +334,17 @@ tcExpr expr@(SectionL x arg1 op) res_ty
     -- It's important to use the origin of 'op', so that call-stacks
     -- come out right; they are driven by the OccurrenceOf CtOrigin
     -- See #13285
+
+mk_op_msg :: LHsExpr GhcRn -> SDoc
+mk_op_msg op = text "The operator" <+> quotes (ppr op) <+> text "takes"
+-}
+
+tcExpr (ExplicitList _ exprs) res_ty
+  = do  { res_ty <- expTypeToType res_ty
+        ; (coi, elt_ty) <- matchExpectedListTy res_ty
+        ; let tc_elt expr = tcCheckPolyExpr expr elt_ty
+        ; exprs' <- mapM tc_elt exprs
+        ; return $ mkHsWrapCo coi $ ExplicitList elt_ty exprs' }
 
 tcExpr expr@(ExplicitTuple x tup_args boxity) res_ty
   | all tupArgPresent tup_args
@@ -379,32 +394,6 @@ tcExpr (ExplicitSum _ alt arity expr) res_ty
        ; expr' <- tcCheckPolyExpr expr (arg_tys' `getNth` (alt - 1))
        ; return $ mkHsWrapCo coi (ExplicitSum arg_tys' alt arity expr' ) }
 
--- This will see the empty list only when -XOverloadedLists.
--- See Note [Empty lists] in GHC.Hs.Expr.
-tcExpr (ExplicitList _ witness exprs) res_ty
-  = case witness of
-      Nothing   -> do  { res_ty <- expTypeToType res_ty
-                       ; (coi, elt_ty) <- matchExpectedListTy res_ty
-                       ; exprs' <- mapM (tc_elt elt_ty) exprs
-                       ; return $
-                         mkHsWrapCo coi $ ExplicitList elt_ty Nothing exprs' }
-
-      Just fln -> do { ((exprs', elt_ty), fln')
-                         <- tcSyntaxOp ListOrigin fln
-                                       [synKnownType intTy, SynList] res_ty $
-                            \ [elt_ty] [_int_mul, list_mul] ->
-                              -- We ignore _int_mul because the integer (first
-                              -- argument of fromListN) is statically known: it
-                              -- is desugared to a literal. Therefore there is
-                              -- no variable of which to scale the usage in that
-                              -- first argument, and `_int_mul` is completely
-                              -- free in this expression.
-                            do { exprs' <-
-                                    mapM (tcScalingUsage list_mul . tc_elt elt_ty) exprs
-                               ; return (exprs', elt_ty) }
-
-                     ; return $ ExplicitList elt_ty (Just fln') exprs' }
-     where tc_elt elt_ty expr = tcCheckPolyExpr expr elt_ty
 
 {-
 ************************************************************************
@@ -895,19 +884,6 @@ tcExpr (HsSpliceE _ (HsSpliced _ mod_finalizers (HsSplicedExpr expr)))
 tcExpr (HsSpliceE _ splice)          res_ty = tcSpliceExpr splice res_ty
 tcExpr e@(HsBracket _ brack)         res_ty = tcTypedBracket e brack res_ty
 tcExpr e@(HsRnBracketOut _ brack ps) res_ty = tcUntypedBracket e brack ps res_ty
-
-{-
-************************************************************************
-*                                                                      *
-                Rebindable syntax
-*                                                                      *
-************************************************************************
--}
-
--- See Note [Rebindable syntax and HsExpansion].
-tcExpr (XExpr (HsExpanded a b)) t
-  = fmap (XExpr . ExpansionExpr . HsExpanded a) $
-      setSrcSpan generatedSrcSpan (tcExpr b t)
 
 {-
 ************************************************************************
@@ -1475,9 +1451,6 @@ Boring and alphabetical:
 fieldCtxt :: FieldLabelString -> SDoc
 fieldCtxt field_name
   = text "In the" <+> quotes (ppr field_name) <+> ptext (sLit "field of a record")
-
-mk_op_msg :: LHsExpr GhcRn -> SDoc
-mk_op_msg op = text "The operator" <+> quotes (ppr op) <+> text "takes"
 
 badFieldTypes :: [(FieldLabelString,TcType)] -> SDoc
 badFieldTypes prs

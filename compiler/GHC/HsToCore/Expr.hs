@@ -520,8 +520,7 @@ dsExpr (HsMultiIf res_ty alts)
              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 -}
 
-dsExpr (ExplicitList elt_ty wit xs)
-  = dsExplicitList elt_ty wit xs
+dsExpr (ExplicitList elt_ty xs) = dsExplicitList elt_ty xs
 
 dsExpr (ArithSeq expr witness seq)
   = case witness of
@@ -980,10 +979,10 @@ time.
 maxBuildLength :: Int
 maxBuildLength = 32
 
-dsExplicitList :: Type -> Maybe (SyntaxExpr GhcTc) -> [LHsExpr GhcTc]
+dsExplicitList :: Type -> [LHsExpr GhcTc]
                -> DsM CoreExpr
 -- See Note [Desugaring explicit lists]
-dsExplicitList elt_ty Nothing xs
+dsExplicitList elt_ty xs
   = do { dflags <- getDynFlags
        ; xs' <- mapM dsLExprNoLP xs
        ; if xs' `lengthExceeds` maxBuildLength
@@ -998,12 +997,6 @@ dsExplicitList elt_ty Nothing xs
   where
     mk_build_list xs' (cons, _) (nil, _)
       = return (foldr (App . App (Var cons)) (Var nil) xs')
-
-dsExplicitList elt_ty (Just fln) xs
-  = do { list <- dsExplicitList elt_ty Nothing xs
-       ; dflags <- getDynFlags
-       ; let platform = targetPlatform dflags
-       ; dsSyntaxExpr fln [mkIntExprInt platform (length xs), list] }
 
 dsArithSeq :: PostTcExpr -> (ArithSeqInfo GhcTc) -> DsM CoreExpr
 dsArithSeq expr (From from)
