@@ -52,7 +52,7 @@ import GHC.Types.SrcLoc    ( mkGeneralSrcSpan )
 import GHC.Builtin.Names   ( unsafeEqualityProofName )
 
 import Control.Monad (ap)
-import Data.List.NonEmpty (nonEmpty, toList)
+import Data.List.NonEmpty (NonEmpty, nonEmpty, toList)
 import Data.Maybe (fromMaybe)
 import Data.Tuple (swap)
 import qualified Data.Set as Set
@@ -326,7 +326,7 @@ coreToTopStgRhs
         -> CtsM (StgRhs, CollectedCCs)
 
 coreToTopStgRhs dflags ccs this_mod (bndr, rhs)
-  = do { new_rhs <- coreToStgExpr rhs
+  = do { new_rhs <- coreToStgExprOrLam rhs
 
        ; let (stg_rhs, ccs') =
                mkTopStgRhs dflags this_mod ccs bndr new_rhs
@@ -358,6 +358,10 @@ coreToTopStgRhs dflags ccs this_mod (bndr, rhs)
 -- ---------------------------------------------------------------------------
 -- Expressions
 -- ---------------------------------------------------------------------------
+
+-- coreToStgExpr panics if the input expression is a value lambda. If the input
+-- might be a value lambda (this should only be in the rhs of a binding---see
+-- Note [CorePrep invariants]) use coreToStgExprOrLam instead.
 
 coreToStgExpr
         :: CoreExpr
@@ -392,16 +396,13 @@ coreToStgExpr expr@(App _ _)
 coreToStgExpr expr@(Lam _ _)
   = let
         (args, body) = myCollectBinders expr
-        args'        = filterStgBinders args
     in
-    extendVarEnvCts [ (a, LambdaBound) | a <- args' ] $ do
-    body' <- coreToStgExpr body
-    let
-        result_expr = case nonEmpty args' of
-          Nothing     -> body'
-          Just args'' -> StgLam args'' body'
+    case filterStgBinders args of
 
-    return result_expr
+      [] -> coreToStgExpr body
+
+      _ -> pprPanic "coretoStgExpr" $
+        text "Unexpected value lambda:" $$ ppr expr
 
 coreToStgExpr (Tick tick expr)
   = do case tick of
@@ -467,6 +468,28 @@ coreToStgExpr e0@(Case scrut bndr _ alts) = do
 
 coreToStgExpr (Let bind body) = coreToStgLet bind body
 coreToStgExpr e               = pprPanic "coreToStgExpr" (ppr e)
+
+-- Like coreToStgExprOrLam, but yields an StgLam if the input expression is a
+-- value lambda. This is used exclusively to convert the rhs of core bindings to
+-- stg, because CorePrep ensures that value lambdas don't exist elsewhere.
+
+coreToStgExprOrLam
+        :: CoreExpr
+        -> CtsM (Either StgLam StgExpr)
+coreToStgExprOrLam (Cast expr _) = coreToStgExprOrLam expr
+coreToStgExprOrLam expr@(Lam _ _)
+    = let
+         (args, body) = myCollectBinders expr
+         args'        = filterStgBinders args
+      in
+      extendVarEnvCts [ (a, LambdaBound) | a <- args' ] $ do
+      body' <- coreToStgExpr body
+      let
+          result_expr = case nonEmpty args' of
+            Nothing     -> Right $ body'
+            Just args'' -> Left $ StgLam args'' body'
+      return result_expr
+coreToStgExprOrLam expr = Right <$> coreToStgExpr expr
 
 mkStgAltType :: Id -> [CoreAlt] -> AltType
 mkStgAltType bndr alts
@@ -674,16 +697,15 @@ coreToStgRhs :: (Id,CoreExpr)
              -> CtsM StgRhs
 
 coreToStgRhs (bndr, rhs) = do
-    new_rhs <- coreToStgExpr rhs
+    new_rhs <- coreToStgExprOrLam rhs
     return (mkStgRhs bndr new_rhs)
 
 -- Generate a top-level RHS. Any new cost centres generated for CAFs will be
 -- appended to `CollectedCCs` argument.
 mkTopStgRhs :: DynFlags -> Module -> CollectedCCs
-            -> Id -> StgExpr -> (StgRhs, CollectedCCs)
+            -> Id -> Either StgLam StgExpr -> (StgRhs, CollectedCCs)
 
-mkTopStgRhs dflags this_mod ccs bndr rhs
-  | StgLam bndrs body <- rhs
+mkTopStgRhs _ _ ccs _ (Left (StgLam bndrs body))
   = -- StgLam can't have empty arguments, so not CAF
     ( StgRhsClosure noExtFieldSilent
                     dontCareCCS
@@ -691,6 +713,7 @@ mkTopStgRhs dflags this_mod ccs bndr rhs
                     (toList bndrs) body
     , ccs )
 
+mkTopStgRhs dflags this_mod ccs bndr (Right rhs)
   | StgConApp con args _ <- unticked_rhs
   , -- Dynamic StgConApps are updatable
     not (isDllConApp dflags this_mod con args)
@@ -732,14 +755,13 @@ mkTopStgRhs dflags this_mod ccs bndr rhs
 
 -- Generate a non-top-level RHS. Cost-centre is always currentCCS,
 -- see Note [Cost-centre initialization plan].
-mkStgRhs :: Id -> StgExpr -> StgRhs
-mkStgRhs bndr rhs
-  | StgLam bndrs body <- rhs
+mkStgRhs :: Id -> Either StgLam StgExpr -> StgRhs
+mkStgRhs _ (Left (StgLam bndrs body))
   = StgRhsClosure noExtFieldSilent
                   currentCCS
                   ReEntrant
                   (toList bndrs) body
-
+mkStgRhs bndr (Right rhs)
   | isJoinId bndr -- must be a nullary join point
   = ASSERT(idJoinArity bndr == 0)
     StgRhsClosure noExtFieldSilent
@@ -934,6 +956,9 @@ myCollectArgs expr
     go (Lam b e)        as ts
        | isTyVar b            = go e as ts -- Note [Collect args]
     go _                _  _  = pprPanic "CoreToStg.myCollectArgs" (ppr expr)
+
+-- Before CoreToStg has finished it encodes (\x -> e) as (let f = \x -> e in f)
+data StgLam = StgLam (NonEmpty Id) StgExpr
 
 -- Note [Collect args]
 -- ~~~~~~~~~~~~~~~~~~~
